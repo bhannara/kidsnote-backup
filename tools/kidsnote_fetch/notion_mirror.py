@@ -428,8 +428,20 @@ ACTIVITY_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
                      "부활절", "한글날", "광복절", "삼일절")),
     ("❤️ 감정/표현", ("사랑한다", "안아주", "포옹", "뽀뽀", "사랑해",
                      "고맙다", "감사", "꼭 안", "토닥")),
+    # 🎓 학습 keyword list intentionally generous to cover language-academy
+    # (어학원) alimnotas in addition to daycare alimnotas. Without these
+    # academy posts fell into the heuristic-keyword fallback path and the
+    # title ended up reading like a noisy word-list ("주요, 시작한다, 명령문...").
     ("🎓 학습",     ("한글", "숫자", "영어", "수업", "글자",
-                     "배우는", "익히는")),
+                     "배우는", "익히는", "배운다", "익힌다",
+                     "배워", "익혀", "배웠", "익혔", "배웁", "익힙",
+                     "학습", "공부", "예습", "복습", "이해",
+                     "교재", "교과", "단어", "어휘", "문법",
+                     "문장", "표현", "파닉스", "발음", "받아쓰기",
+                     "쓰기 연습", "읽기 연습", "말하기 연습",
+                     "동사", "명사", "형용사", "부사", "조사",
+                     "현재 진행형", "현재진행형", "동명사", "명령문",
+                     "프로젝트")),
     ("🧒 친구관계", ("사이좋게", "양보", "도와주", "친구랑", "또래",
                      "함께 놀")),
     ("💉 건강",     ("병원", "체온", "감기", "약을", "안전교육", "소방",
@@ -864,28 +876,44 @@ class NotionMirror:
         body_for_summary = (report.get("content") or "").strip()
         cname = report.get("child_name") or ""
         if body_for_summary and not self.disable_llm_callouts:
+            # All three AI sections always get a toggle so the page layout is
+            # visually consistent. When the LLM returns empty (Chinese leak
+            # filtered out, model refused, response too short, etc.) we still
+            # render the toggle but with a short "AI 생성 실패" placeholder
+            # inside, instead of silently dropping that section. Users
+            # previously reported confusion when one page had 3 toggles and
+            # another only 2 with no explanation (2026-05-21 feedback).
+            _FALLBACK_TEXT = (
+                "AI가 이 알림장에서 한국어 응답을 생성하지 못했습니다. "
+                "본문이 짧거나, LLM이 한국어 외 언어로 답해서 자동 필터에 걸린 경우입니다. "
+                "다음 force-refresh에서 다시 시도됩니다."
+            )
+
             oneliner = self._summary_oneliner(body_for_summary)
-            if oneliner:
-                blocks.append(self._ai_toggle(
-                    "💭 본문 요약 (AI 가공 — 펼치기)",
-                    content=oneliner, emoji="💭", color="purple_background",
-                ))
+            blocks.append(self._ai_toggle(
+                "💭 본문 요약 (AI 가공 — 펼치기)" if oneliner
+                else "💭 본문 요약 (AI 생성 실패 — 펼쳐서 확인)",
+                content=oneliner or _FALLBACK_TEXT,
+                emoji="💭", color="purple_background",
+            ))
             # Child first-person diary
             child_diary = self._child_voice_diary(body_for_summary, cname)
-            if child_diary:
-                blocks.append(self._ai_toggle(
-                    "🧒 자녀의 일기 (AI 가공 — 펼치기)",
-                    content=child_diary, emoji="🧒", color="yellow_background",
-                ))
+            blocks.append(self._ai_toggle(
+                "🧒 자녀의 일기 (AI 가공 — 펼치기)" if child_diary
+                else "🧒 자녀의 일기 (AI 생성 실패 — 펼쳐서 확인)",
+                content=child_diary or _FALLBACK_TEXT,
+                emoji="🧒", color="yellow_background",
+            ))
             # Parent diary (imagined; works whether the report itself was
             # parent- or teacher-written — kidsnote shows the alimnota to
             # the family either way).
             parent_diary = self._parent_voice_diary(body_for_summary, cname)
-            if parent_diary:
-                blocks.append(self._ai_toggle(
-                    "👨‍👩‍👧 부모의 편지 (AI 가공 — 펼치기)",
-                    content=parent_diary, emoji="👨‍👩‍👧", color="pink_background",
-                ))
+            blocks.append(self._ai_toggle(
+                "👨‍👩‍👧 부모의 편지 (AI 가공 — 펼치기)" if parent_diary
+                else "👨‍👩‍👧 부모의 편지 (AI 생성 실패 — 펼쳐서 확인)",
+                content=parent_diary or _FALLBACK_TEXT,
+                emoji="👨‍👩‍👧", color="pink_background",
+            ))
 
         # Weather callout — only for teacher/admin posts (kidsnote auto-fills
         # weather on parent posts too, which would be misleading) and only
@@ -1033,6 +1061,13 @@ class NotionMirror:
         "게",
         # Common adj-as-modifier endings ("즐거운/예쁜/사랑스러운")
         "스러운", "다운", "러운",
+        # Multi-syllable verb-end forms that the legacy heuristic let through
+        # ("배운다, 시작한다, 풀어본다, 명령할" — surfaced in 2024 academy
+        # alimnotas where the title fell back to heuristic keywording).
+        # These are conservative (≥2 chars) so they don't snip real nouns.
+        "한다", "은다", "는다", "본다", "였다", "었다", "했다", "겠다",
+        "한다요", "는다요",
+        "할", "을", "은", "려는",
         # 1-char verb/adj inflection endings — keep only the ones that
         # never legitimately end a Korean noun in alimnota text. ``진/킨/긴/된``
         # were dropped because they would block real nouns like ``사진``.
@@ -1065,6 +1100,20 @@ class NotionMirror:
         "펼쳐진", "늘어진", "이루어진", "쥐어진", "기울어진",
         # Common verb stems that survive particle strip
         "했지", "되었지", "보았지", "갔지",
+        # Academy-alimnota noise: vague abstract nouns / adverbs that
+        # surfaced as top heuristic keywords in 2024 어학원 posts and
+        # made titles like "주요, 시작한다, 명령문, 명령할, 이야기".
+        "주요", "중요", "내용", "부분", "이야기",
+        "동시", "표현", "단어", "문장", "문장들",
+        "기본", "일반", "보통", "전체", "각자",
+        "시작", "마지막", "이전", "이후", "다음",
+        # Imperative/conditional verb forms that snuck through
+        "배우기", "익히기", "공부하기", "연습하기",
+        "시작한다", "배운다", "공부한다", "이해한다", "사용한다",
+        "사용해", "사용하", "사용",
+        "풀어본다", "맞춰본다", "해본다", "찾아본다",
+        "말한다", "말하기", "말해",
+        "묻고", "묻기", "묻는", "물어",
     })
 
     # 1-character keyword stopwords (filler / adverbs / determiners that
@@ -1482,9 +1531,23 @@ class NotionMirror:
         temp_status = to_ko(report.get("temperature_status"))
         if temp_status:
             bits.append(f"🌡️ 체온 {temp_status}")
-        # Numeric temperature if present (some kidsnote setups record actual °C)
+        # Numeric temperature if present (some kidsnote setups record actual °C).
+        # Schema variants observed in the wild:
+        #   - float / str:  37.1
+        #   - dict:         {"body_temp_am": "36.8", "body_temp_pm": "36.6"}
+        # Older code interpolated dict directly via f-string and produced
+        # garbage like ``🌡️ {'body_temp_am': '36.8', 'body_temp_pm': '36.6'}°C``.
         temp = report.get("temperature")
-        if temp not in (None, "", 0):
+        if isinstance(temp, dict):
+            am = (temp.get("body_temp_am") or temp.get("am") or "").strip() if isinstance(temp.get("body_temp_am") or temp.get("am"), str) else (temp.get("body_temp_am") or temp.get("am"))
+            pm = (temp.get("body_temp_pm") or temp.get("pm") or "").strip() if isinstance(temp.get("body_temp_pm") or temp.get("pm"), str) else (temp.get("body_temp_pm") or temp.get("pm"))
+            if am and pm:
+                bits.append(f"🌡️ 오전 {am}°C / 오후 {pm}°C")
+            elif am:
+                bits.append(f"🌡️ 오전 {am}°C")
+            elif pm:
+                bits.append(f"🌡️ 오후 {pm}°C")
+        elif temp not in (None, "", 0):
             bits.append(f"🌡️ {temp}°C")
 
         mood = to_ko(report.get("mood_status"))
@@ -2384,23 +2447,29 @@ class NotionMirror:
     # Pinned Report IDs for singleton system pages (kidsnote ids are
     # all positive 1e9+, so any negative number is safe).
     # Dashboard titles use ``{year}`` placeholder so the page title shows
-    # the regeneration year ("📊 2026년 통계 대시보드"). Helps the user
+    # the regeneration year ("_ 📊 2026년 통계 대시보드"). Helps the user
     # tell at-a-glance which year's snapshot they're looking at.
+    #
+    # ``_`` prefix: ASCII underscore (codepoint 95) sorts higher than the
+    # alimnota / 공지 / 앨범 prefix ``[`` (codepoint 91). When the operator
+    # sorts the Notion DB by 이름 descending, all 7 dashboards cluster at
+    # the top, and the daily entries cascade below in reverse-chronological
+    # order without dashboards interleaving. Requested 2026-05-21.
     DASHBOARD_REPORT_ID = -1
-    DASHBOARD_TITLE = "📊 {year}년 통계 대시보드"
+    DASHBOARD_TITLE = "_ 📊 {year}년 통계 대시보드"
     MEMORIES_REPORT_ID = -2
-    MEMORIES_TITLE = "📅 {year}년 오늘의 추억"
+    MEMORIES_TITLE = "_ 📅 {year}년 오늘의 추억"
     NUTRITION_REPORT_ID = -3
-    NUTRITION_TITLE = "🥗 {year}년 영양 분석"
+    NUTRITION_TITLE = "_ 🥗 {year}년 영양 분석"
     # LLM-driven storytelling pages (auto-skip when Ollama isn't reachable)
     GROWTH_STORY_REPORT_ID = -4
-    GROWTH_STORY_TITLE = "📖 {year}년 매월 성장 스토리"
+    GROWTH_STORY_TITLE = "_ 📖 {year}년 매월 성장 스토리"
     MILESTONES_REPORT_ID = -5
-    MILESTONES_TITLE = "🌟 {year}년 우리 아이의 처음들 (마일스톤)"
+    MILESTONES_TITLE = "_ 🌟 {year}년 우리 아이의 처음들 (마일스톤)"
     INTERESTS_REPORT_ID = -6
-    INTERESTS_TITLE = "🌱 {year}년 분기별 관심사"
+    INTERESTS_TITLE = "_ 🌱 {year}년 분기별 관심사"
     TEACHER_THANKS_REPORT_ID = -7
-    TEACHER_THANKS_TITLE = "💌 {year}년 선생님께"
+    TEACHER_THANKS_TITLE = "_ 💌 {year}년 선생님께"
 
     @classmethod
     def _dashboard_title(cls, template: str) -> str:

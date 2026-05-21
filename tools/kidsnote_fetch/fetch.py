@@ -497,6 +497,23 @@ def _truthy(value: str) -> bool:
     return value.strip().lower() in ("true", "1", "yes", "on", "y")
 
 
+def _chronological_key(item: dict[str, Any]) -> tuple[str, int]:
+    """Sort key that puts the oldest item first.
+
+    Sort priority: ``date_written`` > ``created`` > id. Falls back to the
+    item's id (numeric) for stable ordering when dates collide or are
+    missing. Kidsnote ids are monotonic, so id-as-secondary keeps near-
+    chronological order even for items that share a date.
+    """
+    date = (item.get("date_written") or item.get("created") or "")[:10]
+    iid = item.get("id") or 0
+    try:
+        iid = int(iid)
+    except (TypeError, ValueError):
+        iid = 0
+    return (date, iid)
+
+
 def _pick_child(
     children: list[dict[str, Any]],
     child_id: int | None,
@@ -899,6 +916,13 @@ def main(argv: list[str] | None = None) -> int:
                     matched_menu_ids.add(int(attached_menu["id"]))
             return mirror.publish_report(detail, sess_, attached_menu=attached_menu)
 
+        # Publish chronologically (oldest first). Kidsnote returns most lists
+        # newest-first; flipping the order means a 6-hour cap that cuts off
+        # mid-run leaves the operator with a continuous, gap-free oldest→
+        # newest slice. Re-running just picks up where the previous one
+        # stopped via dedup, and the Notion view (이름 desc) keeps the
+        # newest entries at the top regardless of insertion order.
+        reports.sort(key=_chronological_key)
         _publish_batch(reports, _publish_report, "Report")
 
     # ---- Notion mirror: notices (center-wide) -----
@@ -907,6 +931,7 @@ def main(argv: list[str] | None = None) -> int:
             notices = _list_notices(sess, int(center_id))
             if args.limit:
                 notices = notices[: args.limit]
+            notices.sort(key=_chronological_key)
             _LOGGER.info("fetched %d notices for center id=%s", len(notices), center_id)
             _publish_batch(notices, mirror.publish_notice, "Notice")
         except Exception as e:
@@ -918,6 +943,7 @@ def main(argv: list[str] | None = None) -> int:
             albums = _list_albums(sess, int(target["id"]))
             if args.limit:
                 albums = albums[: args.limit]
+            albums.sort(key=_chronological_key)
             _LOGGER.info("fetched %d albums for child id=%s", len(albums), target["id"])
             _publish_batch(albums, mirror.publish_album, "Album")
         except Exception as e:
