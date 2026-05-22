@@ -79,25 +79,25 @@ on:
       # only turn off via use_ai_features=false, since they share the
       # same Ollama pipeline.
       use_growth_story:
-        description: "📖 매월 성장 스토리 별도 페이지 생성 (알림장 안 callout과 무관)"
+        description: "📖 매월 성장 스토리 별도 페이지 생성"
         required: false
         default: "true"
         type: choice
         options: ["true", "false"]
       use_milestones:
-        description: "🌟 우리 아이의 처음들(마일스톤) 별도 페이지 생성 (알림장 안 callout과 무관)"
+        description: "🌟 우리 아이의 처음들(마일스톤) 별도 페이지 생성"
         required: false
         default: "true"
         type: choice
         options: ["true", "false"]
       use_interests:
-        description: "🌱 분기별 관심사 별도 페이지 생성 (알림장 안 callout과 무관)"
+        description: "🌱 분기별 관심사 별도 페이지 생성"
         required: false
         default: "true"
         type: choice
         options: ["true", "false"]
       use_teacher_thanks:
-        description: "💌 연도별 선생님께 감사 카드 별도 페이지 생성 (알림장 안 callout과 무관)"
+        description: "💌 연도별 선생님께 감사 카드 별도 페이지 생성"
         required: false
         default: "true"
         type: choice
