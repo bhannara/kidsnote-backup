@@ -2740,7 +2740,7 @@ class NotionMirror:
     DASHBOARD_REPORT_ID = -1
     DASHBOARD_TITLE = "_ 📊 통계 대시보드"
     MEMORIES_REPORT_ID = -2
-    MEMORIES_TITLE = "_ 📅 작년에 우리 아이는"
+    MEMORIES_TITLE = "_ 📅 작년추억"
     NUTRITION_REPORT_ID = -3
     NUTRITION_TITLE = "_ 🥗 영양 분석"
     # LLM-driven storytelling pages (auto-skip when Ollama isn't reachable)
