@@ -79,8 +79,18 @@ _LOGGER = logging.getLogger("kidsnote_fetch")
 # the next cron run queues until the current one releases, so dedup
 # picks up where we left off.
 _START_TIME = time.monotonic()
-TIME_BUDGET_SEC = 5 * 3600 + 30 * 60  # 5h30m — 30 min safety margin
-DASHBOARD_RESERVE_SEC = 120  # keep 2 min for fast dashboards after publish loop
+# 2026-05-23: budget reshape after a single job dragged to 8h46m
+# (publish loop stopped cleanly at 5h28m but dashboards ate the next
+# 3h+, breaking concurrency for subsequent cron runs).
+#   * Publish phase budget shrunk to 4h45m (was 5h30m): leaves enough
+#     wall-time for dashboards within the 6h GHA hard cap.
+#   * Dashboard reserve raised to 30min (was 2min): publish loop now
+#     stops with 30 min runway so dashboards have a real chance to
+#     run instead of all skipping with the smaller reserve.
+# Net effect: max wall-time is ~5h15m + cleanup, safely under the 6h
+# GHA cap. Cron auto-resume picks up next cycle.
+TIME_BUDGET_SEC = 4 * 3600 + 45 * 60  # 4h45m for alimnota publish loop
+DASHBOARD_RESERVE_SEC = 30 * 60       # 30 min reserved for dashboards
 
 
 def _remaining_budget() -> float:
