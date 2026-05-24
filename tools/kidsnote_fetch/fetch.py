@@ -1299,8 +1299,23 @@ def main(argv: list[str] | None = None) -> int:
         # we're close to the 6h cap (e.g. force_refresh re-published a
         # lot of alimnotas), the heavy ones get deferred to the next
         # cron run instead of being SIGTERM'd mid-page-create.
-        MIN_BUDGET_FAST = 60   # 1 min for quick dashboards
-        MIN_BUDGET_SLOW = 900  # 15 min — heuristic for big LLM ones
+        #
+        # 2026-05-24: also enforce a per-dashboard wall-clock cap so a
+        # single LLM-heavy dashboard can't drag the whole job past 6h.
+        # 8h-10h runs were observed on cycles 2+ once reports accumulated
+        # and publish_milestones started scanning 100+ entries. The cap
+        # makes the worst case: 4 dashboards × DASHBOARD_PER_CAP_SEC.
+        MIN_BUDGET_FAST = 60       # 1 min for quick dashboards
+        MIN_BUDGET_SLOW = 900      # 15 min — heuristic for big LLM ones
+        DASHBOARD_PER_CAP = 18 * 60  # 18 min wall-clock cap per dashboard
+
+        def _set_dashboard_cap() -> None:
+            # Each dashboard gets the smaller of (per-dashboard cap,
+            # remaining workflow budget). Prevents the last few dashboards
+            # from running into the 6h GHA hard cap.
+            mirror.dashboard_max_seconds = min(
+                DASHBOARD_PER_CAP, max(60, _remaining_budget() - 60),
+            )
 
         if skip_growth:
             _LOGGER.info("📖 Growth story: skipped (--no-growth-story / DISABLE_GROWTH_STORY)")
@@ -1311,6 +1326,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             _LOGGER.info("📖 Growth story: %d months", len(by_month))
+            _set_dashboard_cap()
             try:
                 res = mirror.publish_growth_story(by_month, cname)
                 _LOGGER.info("📖 Growth story page: %s",
@@ -1329,6 +1345,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             _LOGGER.info("🌟 Milestones: scanning %d reports...", len(reports))
+            _set_dashboard_cap()
             try:
                 res = mirror.publish_milestones(reports, cname)
                 _LOGGER.info("🌟 Milestones page: %s",
@@ -1347,6 +1364,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             _LOGGER.info("🌱 Interests: %d quarters", len(by_quarter))
+            _set_dashboard_cap()
             try:
                 res = mirror.publish_interests(by_quarter, cname)
                 _LOGGER.info("🌱 Interests page: %s",
@@ -1365,6 +1383,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             _LOGGER.info("💌 Teacher thanks: composing letter...")
+            _set_dashboard_cap()
             try:
                 res = mirror.publish_teacher_thanks(reports, cname)
                 _LOGGER.info("💌 Teacher thanks page: %s",

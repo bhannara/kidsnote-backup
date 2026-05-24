@@ -626,10 +626,35 @@ class NotionMirror:
         # dashboards still need to be skipped separately via their
         # own toggles — fetch.py wires both at the same time.
         self.disable_llm_callouts: bool = False
+        # 2026-05-24: hard wall-clock cap for each LLM dashboard.
+        # Without this, the dashboard's internal LLM loop kept running
+        # past the 6h GHA cap (8-10h runs observed) because the budget
+        # check was only at dashboard ENTRY, not inside the per-report
+        # iteration. fetch.py sets self.dashboard_max_seconds before
+        # each dashboard call based on the remaining workflow budget.
+        # None means no cap (legacy behavior, for local --monthly-sample).
+        self.dashboard_max_seconds: float | None = None
+        self._dashboard_start_time: float = 0.0
         # Resolved on first use via `_resolve_schema()`.
         self._prop_title: str | None = None
         self._prop_report_id: str | None = None
         self._prop_date: str | None = None
+
+    def _dashboard_started(self) -> None:
+        """Stamp start time at the entry of each publish_X dashboard
+        method so the wall-clock check inside the loop has an anchor.
+        """
+        import time as _t
+        self._dashboard_start_time = _t.monotonic()
+
+    def _dashboard_over_cap(self) -> bool:
+        """True if the current dashboard has exceeded its wall-clock cap.
+        Use inside dashboard loops: ``if self._dashboard_over_cap(): break``.
+        """
+        if self.dashboard_max_seconds is None:
+            return False
+        import time as _t
+        return (_t.monotonic() - self._dashboard_start_time) > self.dashboard_max_seconds
 
     def _maybe_recover_db_id_from_page(self) -> None:
         """Auto-recovery for the most common operator mistake: pasting the
@@ -3495,9 +3520,18 @@ class NotionMirror:
                 "color": "blue_background",
             },
         }]
+        self._dashboard_started()
         # Iterate newest month first per 2026-05-22 user request — the page
         # is read top-down and the most recent month should be visible first.
-        for ym in sorted(reports_by_month.keys(), reverse=True):
+        all_months = sorted(reports_by_month.keys(), reverse=True)
+        for mi, ym in enumerate(all_months):
+            if self._dashboard_over_cap():
+                logging.getLogger(__name__).warning(
+                    "📖 growth story: wall-clock cap %.0fs hit at %d/%d months, "
+                    "publishing partial result",
+                    self.dashboard_max_seconds or 0, mi, len(all_months),
+                )
+                break
             items = reports_by_month[ym]
             if not items:
                 # No alimnotas in this month — render a thin placeholder block
@@ -3650,8 +3684,18 @@ class NotionMirror:
                 "color": "yellow_background",
             },
         }]
+        self._dashboard_started()
         seen_milestones: set[str] = set()
+        scanned = 0
         for r in ordered:
+            if self._dashboard_over_cap():
+                logging.getLogger(__name__).warning(
+                    "🌟 milestones: wall-clock cap %.0fs hit at %d/%d, "
+                    "publishing partial result",
+                    self.dashboard_max_seconds or 0, scanned, len(ordered),
+                )
+                break
+            scanned += 1
             body = (r.get("content") or "").strip()
             if not body or len(body) < 40:
                 continue
@@ -3756,8 +3800,17 @@ class NotionMirror:
                 "color": "green_background",
             },
         }]
+        self._dashboard_started()
         # Newest quarter first per 2026-05-22 user request.
-        for q in sorted(reports_by_quarter.keys(), reverse=True):
+        all_qs = sorted(reports_by_quarter.keys(), reverse=True)
+        for qi, q in enumerate(all_qs):
+            if self._dashboard_over_cap():
+                logging.getLogger(__name__).warning(
+                    "🌱 interests: wall-clock cap %.0fs hit at %d/%d quarters, "
+                    "publishing partial result",
+                    self.dashboard_max_seconds or 0, qi, len(all_qs),
+                )
+                break
             items = reports_by_quarter[q]
             if not items:
                 blocks.append({
@@ -3874,7 +3927,16 @@ class NotionMirror:
             },
         }]
 
-        for yr in sorted(by_year.keys(), reverse=True):
+        self._dashboard_started()
+        all_yrs = sorted(by_year.keys(), reverse=True)
+        for yi, yr in enumerate(all_yrs):
+            if self._dashboard_over_cap():
+                logging.getLogger(__name__).warning(
+                    "💌 teacher thanks: wall-clock cap %.0fs hit at %d/%d years, "
+                    "publishing partial result",
+                    self.dashboard_max_seconds or 0, yi, len(all_yrs),
+                )
+                break
             # Take up to 15 most recent excerpts in that year (80 chars each).
             yr_reports = sorted(
                 by_year[yr], key=lambda r: r.get("date_written") or "", reverse=True,
