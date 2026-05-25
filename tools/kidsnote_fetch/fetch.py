@@ -1285,19 +1285,32 @@ def main(argv: list[str] | None = None) -> int:
     # ---- (LLM-driven; auto-skipped when Ollama isn't reachable) ----
     #
     # Cron auto-resume: regenerating the 4 LLM dashboards costs ~1.5 hours
-    # of Ollama time. With the workflow on a 4-hour cron schedule we don't
+    # of Ollama time. With the workflow on a 6-hour cron schedule we don't
     # want to burn that on every run; only do it when there's actually new
-    # content to incorporate, or when the user explicitly asked for a
-    # refresh. Idle cron runs (no new alimnotas) finish in ~1 min.
+    # content to incorporate, when the user explicitly asked for a refresh,
+    # OR when one of the four LLM dashboards is missing from the DB (the
+    # previous cycle's wall-clock cap may have skipped it; the next cycle
+    # should fill the gap without needing operator intervention).
+    LLM_DASHBOARD_SENTINELS = {-4, -5, -6, -7}  # growth/milestones/interests/teacher_thanks
+    missing_llm_dashboards = (
+        bool(LLM_DASHBOARD_SENTINELS - set(page_map.keys()))
+        if mirror is not None else False
+    )
     new_pages_published = len(publish_results)
     should_run_llm_dashboards = (
         mirror is not None and reports
-        and (new_pages_published > 0 or args.force_refresh)
+        and (new_pages_published > 0 or args.force_refresh or missing_llm_dashboards)
     )
     if mirror is not None and reports and not should_run_llm_dashboards:
         _LOGGER.info(
             "LLM dashboards: skipping (no new alimnotas added this run; "
             "set force_refresh=true to force regeneration)"
+        )
+    elif missing_llm_dashboards and new_pages_published == 0 and not args.force_refresh:
+        missing_set = LLM_DASHBOARD_SENTINELS - set(page_map.keys())
+        _LOGGER.info(
+            "LLM dashboards: running to fill missing sentinel(s) %s",
+            sorted(missing_set),
         )
     if should_run_llm_dashboards:
         cname = (reports[0].get("child_name") or "") if reports else ""
