@@ -698,19 +698,55 @@ def main(argv: list[str] | None = None) -> int:
     disable_all_llm = args.no_llm or _truthy(_resolve_secret(env, "DISABLE_ALL_LLM"))
 
     # ---- Notion mirror setup (if requested) -----
-    mirror = None
+    # 2026-05-25: multi-child support. Collect (token, db_id) pairs from
+    # numbered secrets so a 2/3/.../N-child account can back up each child
+    # into a separate Notion DB without operator-side child_name input.
+    #
+    # Pairing rules:
+    #   * NOTION_DATABASE_ID         (required, slot 1)
+    #   * NOTION_DATABASE_ID_2 / _3 / ... (optional, slots 2-10)
+    #   * NOTION_TOKEN_<N> reuses NOTION_TOKEN when not provided — most
+    #     setups share one integration token across the workspace.
+    # API child[0] → slot 1, child[1] → slot 2, etc. Operators who need
+    # a different mapping (gender/age order vs API order) can still set
+    # KIDSNOTE_CHILD_NAME_<N> to override per slot.
+    mirror = None  # legacy single-mirror reference (kept for one-child path)
     skip_ids: set[int] = set()
     page_map: dict[int, str] = {}
+    notion_slots: list[dict[str, Any]] = []  # [{db_id, token, child_name_override}]
     if args.publish_to_notion:
         from notion_mirror import NotionMirror  # local module
-        token = _resolve_secret(env, "NOTION_TOKEN")
-        db_id = _resolve_secret(env, "NOTION_DATABASE_ID")
-        if not token or not db_id:
+        token0 = _resolve_secret(env, "NOTION_TOKEN")
+        db_id0 = _resolve_secret(env, "NOTION_DATABASE_ID")
+        if not token0 or not db_id0:
             sys.exit(
                 "NOTION_TOKEN / NOTION_DATABASE_ID missing. "
                 "Set them in .env (local) or as repo secrets (GitHub Actions)."
             )
-        mirror = NotionMirror(token=token, database_id=db_id)
+        notion_slots.append({
+            "db_id": db_id0,
+            "token": token0,
+            "name_override": _resolve_secret(env, "KIDSNOTE_CHILD_NAME"),
+        })
+        # Slots 2..10 are optional. Stop scanning at the first gap.
+        for slot in range(2, 11):
+            db_n = _resolve_secret(env, f"NOTION_DATABASE_ID_{slot}")
+            if not db_n:
+                break
+            notion_slots.append({
+                "db_id": db_n,
+                "token": _resolve_secret(env, f"NOTION_TOKEN_{slot}") or token0,
+                "name_override": _resolve_secret(env, f"KIDSNOTE_CHILD_NAME_{slot}"),
+            })
+        if len(notion_slots) > 1:
+            _LOGGER.info(
+                "Multi-child mode: %d Notion DB slots detected",
+                len(notion_slots),
+            )
+        # For backward compatibility the original single-mirror path below
+        # uses the first slot. Multi-child loop wraps this same logic per
+        # slot further down.
+        mirror = NotionMirror(token=token0, database_id=db_id0)
         # Master switch: propagate to the mirror so per-alimnota callouts
         # (요약 / 자녀일기 / 부모편지) are skipped during publishing.
         if disable_all_llm:
