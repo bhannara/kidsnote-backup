@@ -2980,7 +2980,14 @@ class NotionMirror:
         return template.format(year=datetime.now().year)
 
     def _find_singleton_page(self, sentinel_report_id: int) -> str | None:
-        """Locate an existing system singleton page by its sentinel Report ID."""
+        """Locate an existing system singleton page by its sentinel Report ID.
+
+        If multiple unarchived pages share the sentinel (a known
+        side-effect of an earlier publish cycle that didn't archive
+        cleanly — e.g. race between two cron runs against the same
+        DB), this also archives the older duplicates so only the
+        latest one survives. Returns the most-recently-edited page.
+        """
         self._resolve_schema()
         assert self._prop_report_id is not None
         try:
@@ -2992,13 +2999,25 @@ class NotionMirror:
                         "property": self._prop_report_id,
                         "number": {"equals": sentinel_report_id},
                     },
-                    "page_size": 1,
+                    "sorts": [{"timestamp": "last_edited_time", "direction": "descending"}],
+                    "page_size": 10,
                 },
                 timeout=self.timeout,
             )
             r.raise_for_status()
             results = r.json().get("results") or []
-            return results[0]["id"] if results else None
+            if not results:
+                return None
+            # First entry is the latest. Archive any older duplicates
+            # to keep "singleton" semantics intact for the operator.
+            latest = results[0]["id"]
+            for duplicate in results[1:]:
+                _LOGGER.warning(
+                    "singleton rid=%d had %d duplicates — archiving %s",
+                    sentinel_report_id, len(results) - 1, duplicate["id"],
+                )
+                self._archive_page(duplicate["id"])
+            return latest
         except Exception as e:
             _LOGGER.warning("singleton lookup failed (rid=%d): %s", sentinel_report_id, e)
             return None
