@@ -1234,10 +1234,44 @@ def main(argv: list[str] | None = None) -> int:
         bool(LLM_DASHBOARD_SENTINELS - set(page_map.keys()))
         if mirror is not None else False
     )
+
+    # Partial-growth-story self-heal: the publish_growth_story singleton
+    # is overwritten in full each cycle, so a wall-clock-cap truncation
+    # mid-loop leaves a permanently incomplete page (no new alimnotas
+    # later means the dashboard skip path takes over and the gap never
+    # closes). Detect the leftover placeholder text from
+    # notion_mirror.publish_growth_story and treat it as "regenerate me"
+    # the same way a missing sentinel would.
+    incomplete_growth_story = False
+    if mirror is not None and -4 in page_map:
+        try:
+            growth_page_id = page_map[-4]
+            children = mirror.session.get(
+                f"https://api.notion.com/v1/blocks/{growth_page_id}/children?page_size=100",
+                headers=mirror._headers(), timeout=mirror.timeout,
+            )
+            if children.ok:
+                placeholder_marker = "다음 cron 사이클에서 보충됩니다"
+                for block in children.json().get("results") or []:
+                    if block.get("type") != "paragraph":
+                        continue
+                    rt = (block.get("paragraph") or {}).get("rich_text") or []
+                    txt = "".join(seg.get("plain_text", "") for seg in rt)
+                    if placeholder_marker in txt:
+                        incomplete_growth_story = True
+                        break
+        except Exception as e:
+            _LOGGER.warning("growth-story completeness check failed: %s", e)
+
     new_pages_published = len(publish_results)
     should_run_llm_dashboards = (
         mirror is not None and reports
-        and (new_pages_published > 0 or args.force_refresh or missing_llm_dashboards)
+        and (
+            new_pages_published > 0
+            or args.force_refresh
+            or missing_llm_dashboards
+            or incomplete_growth_story
+        )
     )
     if mirror is not None and reports and not should_run_llm_dashboards:
         _LOGGER.info(
@@ -1249,6 +1283,10 @@ def main(argv: list[str] | None = None) -> int:
         _LOGGER.info(
             "LLM dashboards: running to fill missing sentinel(s) %s",
             sorted(missing_set),
+        )
+    elif incomplete_growth_story and new_pages_published == 0 and not args.force_refresh:
+        _LOGGER.info(
+            "LLM dashboards: running to fill partial growth story (placeholder months detected)",
         )
     if should_run_llm_dashboards:
         cname = (reports[0].get("child_name") or "") if reports else ""

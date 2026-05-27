@@ -3456,47 +3456,67 @@ class NotionMirror:
             },
         }]
         self._dashboard_started()
-        # Iterate newest month first per 2026-05-22 user request — the page
-        # is read top-down and the most recent month should be visible first.
-        all_months = sorted(reports_by_month.keys(), reverse=True)
-        for mi, ym in enumerate(all_months):
+        # Two-axis ordering (2026-05-27 fix):
+        #   * Display order = newest first (2026-05-22 user request — most
+        #     recent month at the top of the page).
+        #   * Processing order = interleave newest ↔ oldest, working inward.
+        # If the wall-clock cap fires partway through a 12-15 month run,
+        # the old "newest-first" loop published 2026 months and dropped
+        # ALL of 2025 — and because the partial result overwrote the
+        # singleton, the next cron run skipped LLM dashboards entirely
+        # (no new alimnotas → should_run_llm_dashboards=False), so 2025
+        # stayed permanently empty. Interleaving guarantees at least one
+        # entry per year on every pass; further runs fill the rest.
+        sorted_desc = sorted(reports_by_month.keys(), reverse=True)
+        processing_order: list[str] = []
+        left, right = 0, len(sorted_desc) - 1
+        while left <= right:
+            processing_order.append(sorted_desc[left]); left += 1
+            if left <= right:
+                processing_order.append(sorted_desc[right]); right -= 1
+
+        # Per-month rendered content (heading + paragraphs). Filled in
+        # processing_order, then walked in sorted_desc order at the end
+        # so the page displays newest-first regardless of which months
+        # finished this cycle.
+        ym_blocks: dict[str, list[dict[str, Any]]] = {}
+
+        def _make_heading(ym: str) -> dict[str, Any]:
+            return {
+                "object": "block", "type": "heading_2",
+                "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"📅 {ym}"}}]},
+            }
+
+        cap_hit = False
+        for mi, ym in enumerate(processing_order):
             if self._dashboard_over_cap():
                 logging.getLogger(__name__).warning(
                     "📖 growth story: wall-clock cap %.0fs hit at %d/%d months, "
-                    "publishing partial result",
-                    self.dashboard_max_seconds or 0, mi, len(all_months),
+                    "remaining months will be filled in next cron cycle",
+                    self.dashboard_max_seconds or 0, mi, len(processing_order),
                 )
+                cap_hit = True
                 break
             items = reports_by_month[ym]
             if not items:
-                # No alimnotas in this month — render a thin placeholder block
-                # so the operator can see the gap exists rather than wondering
-                # whether the month was silently dropped.
-                blocks.append({
-                    "object": "block", "type": "heading_2",
-                    "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"📅 {ym}"}}]},
-                })
-                blocks.append(self._para(
-                    "이 달에는 알림장이 없습니다.", color="gray",
-                ))
+                ym_blocks[ym] = [
+                    _make_heading(ym),
+                    self._para("이 달에는 알림장이 없습니다.", color="gray"),
+                ]
                 continue
             # Shrunk to 2500 chars (was 4500) — llama3.1:8b on CPU was
             # timing out at 180s with the longer context on every month.
             joined = "\n\n".join(
                 (r.get("content") or "").strip()[:200] for r in items[:15]
             )[:2500]
-            # Sparse-month handling: instead of silently dropping the month
-            # (which left visible gaps the user couldn't explain), render a
-            # heading + a transparent placeholder.
             if len(joined.strip()) < 200:
-                blocks.append({
-                    "object": "block", "type": "heading_2",
-                    "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"📅 {ym}"}}]},
-                })
-                blocks.append(self._para(
-                    f"이 달은 알림장이 짧아서 성장 스토리를 만들기 어렵습니다 (알림장 {len(items)}개).",
-                    color="gray",
-                ))
+                ym_blocks[ym] = [
+                    _make_heading(ym),
+                    self._para(
+                        f"이 달은 알림장이 짧아서 성장 스토리를 만들기 어렵습니다 (알림장 {len(items)}개).",
+                        color="gray",
+                    ),
+                ]
                 continue
             given = _given_name(child_name) or "아이"
             topic = _topic_form(given)  # 하린→하린이 / 유주→유주
@@ -3528,14 +3548,13 @@ class NotionMirror:
             )
             if not story:
                 _LOGGER.warning("growth story for %s: empty LLM output, placeholder", ym)
-                blocks.append({
-                    "object": "block", "type": "heading_2",
-                    "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"📅 {ym}"}}]},
-                })
-                blocks.append(self._para(
-                    "이 달의 성장 스토리를 LLM이 만들지 못했습니다. 다음 force-refresh에서 다시 시도됩니다.",
-                    color="gray",
-                ))
+                ym_blocks[ym] = [
+                    _make_heading(ym),
+                    self._para(
+                        "이 달의 성장 스토리를 LLM이 만들지 못했습니다. 다음 force-refresh에서 다시 시도됩니다.",
+                        color="gray",
+                    ),
+                ]
                 continue
             # Example-bleed guard. Previously we dropped the whole month
             # when one of 피아노/발레/자화상/음악교실/미술시간 leaked from
@@ -3550,7 +3569,6 @@ class NotionMirror:
                     "growth story for %s leaked example tokens (%s) — redacting",
                     ym, ", ".join(leaked),
                 )
-                # Drop the entire sentence containing each leaked token
                 cleaned_sents = []
                 for sent in story.replace("<br>", "\n").split("\n"):
                     if not any(tok in sent for tok in BLEED_TOKENS):
@@ -3559,19 +3577,34 @@ class NotionMirror:
                 if len(story) < 30:
                     _LOGGER.warning("growth story for %s: too short after redaction, skipping", ym)
                     continue
-            blocks.append({
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {"rich_text": [{
-                    "type": "text",
-                    "text": {"content": f"📅 {ym}"},
-                }]},
-            })
+            month_blocks = [_make_heading(ym)]
             for chunk in self._chunk(story):
-                blocks.append(self._para(chunk))
-        return self._replace_singleton(
+                month_blocks.append(self._para(chunk))
+            ym_blocks[ym] = month_blocks
+
+        # Compose page in display order (newest → oldest). Months that
+        # didn't finish this cycle get a transparent placeholder so the
+        # user can see the gap; the next cron run will fill them in
+        # (the self-heal logic in fetch.py treats partial coverage as
+        # "missing dashboard" — see GROWTH_STORY incomplete handling).
+        for ym_display in sorted_desc:
+            if ym_display in ym_blocks:
+                blocks.extend(ym_blocks[ym_display])
+            else:
+                blocks.append(_make_heading(ym_display))
+                blocks.append(self._para(
+                    "다음 cron 사이클에서 보충됩니다.",
+                    color="gray",
+                ))
+        page_result = self._replace_singleton(
             self.GROWTH_STORY_REPORT_ID, self._dashboard_title(self.GROWTH_STORY_TITLE), blocks,
         )
+        # Tag the returned dict so the caller can know whether more
+        # months remain — drives the self-heal "regenerate next cron"
+        # decision in fetch.py.
+        if page_result is not None:
+            page_result["_growth_story_complete"] = (not cap_hit) and (len(ym_blocks) == len(sorted_desc))
+        return page_result
 
     def publish_milestones(
         self,
