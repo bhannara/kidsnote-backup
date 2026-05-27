@@ -3474,14 +3474,84 @@ class NotionMirror:
         # singleton, the next cron run skipped LLM dashboards entirely
         # (no new alimnotas → should_run_llm_dashboards=False), so 2025
         # stayed permanently empty. Interleaving guarantees at least one
-        # entry per year on every pass; further runs fill the rest.
+        # entry per year on every pass.
+        #
+        # 2026-05-28 fix: incremental self-heal. Earlier interleave fix
+        # ensured both year ends got coverage on a single pass but left
+        # a worse bug: with cap=45min and ~5 months/cap, EVERY cycle
+        # processed the same 8 months and re-wrote the same 7
+        # placeholders, so placeholder months were never filled. Now
+        # we read the existing page first, reuse the already-completed
+        # months verbatim, and only burn LLM time on placeholder
+        # months. Each cycle reduces the placeholder set by ~5-7
+        # months until coverage is complete.
+        existing_month_text: dict[str, str] = {}
+        placeholder_months: set[str] = set()
+        existing_page_id = self._find_singleton_page(self.GROWTH_STORY_REPORT_ID)
+        if existing_page_id:
+            try:
+                r = self.session.get(
+                    f"{NOTION_API}/blocks/{existing_page_id}/children?page_size=100",
+                    headers=self._headers(),
+                    timeout=self.timeout,
+                )
+                if r.ok:
+                    cur_ym: str | None = None
+                    cur_text = ""
+                    cur_is_placeholder = False
+
+                    def _close_month() -> None:
+                        if cur_ym is None:
+                            return
+                        if cur_is_placeholder:
+                            placeholder_months.add(cur_ym)
+                        elif cur_text.strip():
+                            existing_month_text[cur_ym] = cur_text
+
+                    for block in r.json().get("results") or []:
+                        btype = block.get("type")
+                        if btype == "heading_2":
+                            _close_month()
+                            h_text = "".join(
+                                seg.get("plain_text", "")
+                                for seg in block.get("heading_2", {}).get("rich_text") or []
+                            )
+                            m = re.search(r"\d{4}-\d{2}", h_text)
+                            cur_ym = m.group(0) if m else None
+                            cur_text = ""
+                            cur_is_placeholder = False
+                        elif cur_ym and btype == "paragraph":
+                            rt = block.get("paragraph", {}).get("rich_text") or []
+                            text = "".join(seg.get("plain_text", "") for seg in rt)
+                            if "다음 cron 사이클" in text:
+                                cur_is_placeholder = True
+                            else:
+                                cur_text += ("\n" if cur_text else "") + text
+                    _close_month()
+            except Exception as e:
+                _LOGGER.warning("growth story: existing-page read failed: %s", e)
+
         sorted_desc = sorted(reports_by_month.keys(), reverse=True)
-        processing_order: list[str] = []
+        interleaved: list[str] = []
         left, right = 0, len(sorted_desc) - 1
         while left <= right:
-            processing_order.append(sorted_desc[left]); left += 1
+            interleaved.append(sorted_desc[left]); left += 1
             if left <= right:
-                processing_order.append(sorted_desc[right]); right -= 1
+                interleaved.append(sorted_desc[right]); right -= 1
+        # Placeholder months first (this cycle's actual work), then any
+        # remaining (already-complete; they'll skip the LLM call in the
+        # loop). Without this reorder, the cap would keep firing on the
+        # same first-N months every cycle.
+        processing_order = (
+            [m for m in interleaved if m in placeholder_months]
+            + [m for m in interleaved if m not in placeholder_months]
+        )
+        if placeholder_months:
+            logging.getLogger(__name__).info(
+                "📖 growth story self-heal: %d placeholder month(s) to fill, "
+                "%d already complete",
+                len(placeholder_months), len(existing_month_text),
+            )
 
         # Per-month rendered content (heading + paragraphs). Filled in
         # processing_order, then walked in sorted_desc order at the end
@@ -3495,8 +3565,20 @@ class NotionMirror:
                 "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"📅 {ym}"}}]},
             }
 
+        # Pre-fill ym_blocks from already-complete months read off the
+        # existing page. These skip the LLM call in the main loop.
+        for ym, text in existing_month_text.items():
+            if ym not in reports_by_month:
+                continue
+            blocks_for_month: list[dict[str, Any]] = [_make_heading(ym)]
+            for chunk in self._chunk(text):
+                blocks_for_month.append(self._para(chunk))
+            ym_blocks[ym] = blocks_for_month
+
         cap_hit = False
         for mi, ym in enumerate(processing_order):
+            if ym in ym_blocks:
+                continue  # already filled from prior cycle, no LLM needed
             if self._dashboard_over_cap():
                 logging.getLogger(__name__).warning(
                     "📖 growth story: wall-clock cap %.0fs hit at %d/%d months, "
