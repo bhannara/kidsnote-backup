@@ -91,20 +91,23 @@ https://www.notion.so/내이름/238f5e29c0894adfb6c4d8e1a5b2c3d4?v=...
 
 ---
 
-## 7️⃣ GitHub Secrets 3개 등록 (3분)
+## 7️⃣ GitHub Secrets 4개 등록 (4분)
 
 1. 본인 fork 페이지 (`https://github.com/내깃허브아이디/kidsnote-backup`) → 메뉴줄 **`Settings`** 클릭
    - ⚠️ 우측 상단 프로필 옆 Settings가 아닌 **repo 안의 Settings**
 2. 좌측 사이드바 **`Secrets and variables` → `Actions`** 클릭
-3. **`New repository secret`** 버튼을 3번 클릭해서 다음을 등록:
+3. **`New repository secret`** 버튼을 4번 클릭해서 다음을 등록:
 
 | Name (대소문자·언더바 정확히) | 값 |
 |---|---|
 | `NOTION_TOKEN` | 3번에서 받은 토큰 |
 | `NOTION_DATABASE_ID` | 5번에서 추출한 32자 hex |
 | `KIDSNOTE_SESSION_COOKIE` | 6번에서 복사한 쿠키 |
+| `KIDSNOTE_CHILD_NAME` | 백업할 자녀 이름 — 풀네임/일부 둘 다 OK (예: `우하린` 자녀면 **`우하린`** 또는 **`하린`** 어느 것을 적어도 같은 결과) |
 
-✅ Secrets 목록에 세 줄이 정확한 이름으로 나타나면 성공.
+✅ Secrets 목록에 네 줄이 정확한 이름으로 나타나면 성공.
+
+> 👶 **`KIDSNOTE_CHILD_NAME`는 자녀가 1명이어도 꼭 입력하세요** — 부분 일치(대소문자 무시 substring) 방식이라 풀네임이든 두 글자만이든 자유롭게 입력 가능. 자녀 1명일 때도 명시하면 ① API의 "첫 번째 자녀" 자동 선택에 의존하지 않고, ② 나중에 동생이 생겨도 의도치 않게 다른 아이로 넘어가지 않아요.
 
 > 🤖 **(선택) AI 가공도 받고 싶으면** secret 한 줄 더 추가: Name **`AI_FEATURES`**, Value **`on`** (소문자). 그러면 자녀 일기/부모 편지/LLM 대시보드 4종까지 같이 만들어집니다 (1년치 20~50시간). 안 추가하면 기본값 OFF로 1~3시간만에 끝.
 
