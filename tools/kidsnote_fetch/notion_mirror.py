@@ -30,6 +30,34 @@ from datetime import datetime
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+
+def _build_retrying_session() -> requests.Session:
+    """A requests Session that automatically backs off and retries on
+    Notion's 429 (Too Many Requests) and transient 5xx responses.
+
+    Without this, a single 429 during a large backfill aborted that
+    one page's POST /pages and left a gap (the page only recovered on
+    the *next* cron cycle via dedup). With many parents running the
+    workflow after launch, 429s get more frequent, so we retry in-
+    process. ``respect_retry_after_header`` honors Notion's
+    Retry-After so we wait exactly as long as the API asks.
+    """
+    session = requests.Session()
+    retry = Retry(
+        total=5,
+        backoff_factor=1.0,  # 0s, 1s, 2s, 4s, 8s between attempts
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "POST", "PATCH", "DELETE"}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
 
 # Lazy-loaded global kiwipiepy instance. The first call to ``_get_kiwi()``
 # initializes the analyzer (loads the Korean morphology dictionary; ~80MB
@@ -632,7 +660,7 @@ class NotionMirror:
         self.database_id = database_id
         self.max_image_bytes = max_image_bytes
         self.strip_exif_gps = strip_exif_gps
-        self.session = session or requests.Session()
+        self.session = session or _build_retrying_session()
         self.timeout = timeout
         # When True, skip the 3 per-alimnota LLM callouts (💭 요약 /
         # 🧒 자녀 일기 / 👨‍👩‍👧 부모 편지). Used by the --no-llm /
