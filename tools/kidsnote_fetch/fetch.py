@@ -180,17 +180,23 @@ def _list_children(sess: requests.Session) -> list[dict[str, Any]]:
 
 
 def _list_reports(
-    sess: requests.Session, child_id: int, page_size: int = 9999
+    sess: requests.Session,
+    child_id: int,
+    page_size: int = 9999,
 ) -> list[dict[str, Any]]:
-    r = sess.get(
-        f"{API}/children/{child_id}/reports/",
-        params={"page_size": page_size, "tz": "Asia/Seoul", "child": child_id},
-        timeout=60,
+    """Fetch report history with a large page size to avoid cursor-loop
+    issues, using pagination as a fallback.
+    """
+    url = (
+        f"{API}/children/{child_id}/reports/"
+        f"?tz=Asia%2FSeoul&child={child_id}"
     )
-    r.raise_for_status()
-    body = r.json()
-    return body.get("results") or body.get("reports") or []
-
+    return _list_paginated(
+        sess,
+        url,
+        page_size=page_size,
+        max_pages=100,
+    )
 
 def _list_comments(
     sess: requests.Session, kind: str, item_id: int
