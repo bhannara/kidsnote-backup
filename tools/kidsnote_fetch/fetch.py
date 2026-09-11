@@ -318,15 +318,20 @@ def _list_paginated(
 
 
 def _list_notices(
-    sess: requests.Session, center_id: int
+    sess: requests.Session,
+    center_id: int,
+    page_size: int = 9999,
 ) -> list[dict[str, Any]]:
     """Center-wide notices (`/api/v1/centers/<id>/notices/`).
-
     Cursor-paginated; we walk the full history. Each result has the same
     shape as a report (title/content/author/attached_images/video/files).
     """
+
     return _list_paginated(
-        sess, f"{KIDSNOTE_BASE}/api/v1/centers/{center_id}/notices/"
+        sess,
+        f"{KIDSNOTE_BASE}/api/v1/centers/{center_id}/notices/",
+        page_size=page_size,
+        max_pages=100,
     )
 
 
@@ -1001,6 +1006,21 @@ def main(argv: list[str] | None = None) -> int:
     if mirror is not None and not args.no_notices and center_id:
         try:
             notices = _list_notices(sess, int(center_id))
+            if reports:
+                first_report_date = min(
+                    (
+                        (r.get("date_written") or r.get("created") or "")[:10]
+                        for r in reports
+                        if r.get("date_written") or r.get("created")
+                    ),
+                    default="",
+                )
+                if first_report_date:
+                    notices = [
+                        n for n in notices
+                        if (n.get("date_written") or n.get("created") or "")[:10]
+                        >= first_report_date
+                    ]
             if args.limit:
                 notices = notices[: args.limit]
             _LOGGER.info("fetched %d notices for center id=%s", len(notices), center_id)
