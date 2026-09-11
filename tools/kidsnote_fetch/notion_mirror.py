@@ -2462,9 +2462,7 @@ class NotionMirror:
             tail = summary or f"알림장 #{report_id}"
 
         prefix_emojis = author_icon + (f" {w_emoji}" if w_emoji else "")
-        # `_2 ` prefix groups alimnotas in the name-desc sort order below
-        # the dashboards (_5/_4) and albums (_3), above notices (_1).
-        title = f"_2 [{date_str}] 알림장: {prefix_emojis} {tail}"
+        title = f"[{date_str}] 알림장: {prefix_emojis} {tail}"
 
         # Upload photos first so we can drop image blocks into the page body.
         image_upload_ids: list[str] = []
@@ -2858,8 +2856,7 @@ class NotionMirror:
             or datetime.now().date().isoformat()
         )
         nt = (notice.get("title") or "").strip()
-        # `_1 ` prefix sorts notices to the bottom in name-desc order.
-        title = f"_1 [{date_str}] 공지: {nt}" if nt else f"_1 [{date_str}] 공지 #{notice_id}"
+        title = f"[{date_str}] 공지: {nt}" if nt else f"[{date_str}] 공지 #{notice_id}"
         meta_bits: list[str] = []
         if notice.get("author_name"):
             meta_bits.append(f"작성 {notice['author_name']}")
@@ -2888,9 +2885,7 @@ class NotionMirror:
             or datetime.now().date().isoformat()
         )
         at = (album.get("title") or "").strip()
-        # `_3 ` prefix sorts albums between dashboards (_5/_4) and
-        # alimnotas (_2) in name-desc order.
-        title = f"_3 [{date_str}] 앨범: {at}" if at else f"_3 [{date_str}] 앨범 #{album_id}"
+        title = f"[{date_str}] 앨범: {at}" if at else f"[{date_str}] 앨범 #{album_id}"
         meta_bits: list[str] = []
         if album.get("author_name"):
             meta_bits.append(f"작성 {album['author_name']}")
@@ -3037,15 +3032,6 @@ class NotionMirror:
 
     # Pinned Report IDs for singleton system pages (kidsnote ids are
     # all positive 1e9+, so any negative number is safe).
-    # Dashboard titles use ``{year}`` placeholder so the page title shows
-    # the regeneration year ("_ 📊 2026년 통계 대시보드"). Helps the user
-    # tell at-a-glance which year's snapshot they're looking at.
-    #
-    # ``_`` prefix: ASCII underscore (codepoint 95) sorts higher than the
-    # alimnota / 공지 / 앨범 prefix ``[`` (codepoint 91). When the operator
-    # sorts the Notion DB by 이름 descending, all 7 dashboards cluster at
-    # the top, and the daily entries cascade below in reverse-chronological
-    # order without dashboards interleaving. Requested 2026-05-21.
     # Titles are now year-agnostic per 2026-05-22 user feedback — each
     # dashboard already groups its content by year *inside* the page, so
     # putting a single year in the title was misleading (the stats
@@ -3054,31 +3040,23 @@ class NotionMirror:
     # renamed entirely ("작년에 우리 아이는") because that phrasing reads
     # more like a family scrapbook header than a system label.
     DASHBOARD_REPORT_ID = -1
-    # 2026-05-26: title prefix scheme for name-desc sort.
-    # Default Notion sort is name-desc; with these prefixes the
-    # categories cluster top-down in the requested order:
-    #   _5 통계 dashboards (3)
-    #   _4 AI dashboards   (4)
-    #   _3 앨범
-    #   _2 알림장
-    #   _1 공지
-    DASHBOARD_TITLE = "_5 📊 통계 대시보드"
+    DASHBOARD_TITLE = "📊 통계 대시보드"
     # MEMORIES (📅 작년추억) was removed 2026-05-27 — feature retired by
     # user request: most accounts didn't have multi-year backups yet so
     # the page was almost always empty, and the page only refreshed once
     # per cron cycle so it was rarely useful as a daily widget. Reserved
     # ID -2 stays burned to avoid clashing if anyone re-introduces it.
     NUTRITION_REPORT_ID = -3
-    NUTRITION_TITLE = "_5 🥗 영양 분석"
+    NUTRITION_TITLE = "🥗 영양 분석"
     # LLM-driven storytelling pages (auto-skip when Ollama isn't reachable)
     GROWTH_STORY_REPORT_ID = -4
-    GROWTH_STORY_TITLE = "_4 📖 매월 성장 스토리"
+    GROWTH_STORY_TITLE = "📖 매월 성장 스토리"
     MILESTONES_REPORT_ID = -5
-    MILESTONES_TITLE = "_4 🌟 우리 아이의 처음들 (마일스톤)"
+    MILESTONES_TITLE = "🌟 우리 아이의 처음들 (마일스톤)"
     INTERESTS_REPORT_ID = -6
-    INTERESTS_TITLE = "_4 🌱 분기별 관심사"
+    INTERESTS_TITLE = "🌱 분기별 관심사"
     TEACHER_THANKS_REPORT_ID = -7
-    TEACHER_THANKS_TITLE = "_4 💌 연도별 선생님께"
+    TEACHER_THANKS_TITLE = "💌 연도별 선생님께"
 
     @classmethod
     def _dashboard_title(cls, template: str) -> str:
