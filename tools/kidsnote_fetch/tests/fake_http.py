@@ -67,7 +67,7 @@ class FakeServer:
                 except ConnectionError:  # client gave up first (timeout tests)
                     pass
 
-            do_GET = do_POST = do_PUT = _serve
+            do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = _serve
 
             def log_message(self, *args) -> None:  # keep test output clean
                 pass

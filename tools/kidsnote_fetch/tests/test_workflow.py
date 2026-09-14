@@ -78,6 +78,13 @@ class MirrorWorkflowTest(unittest.TestCase):
                          "a step-level env would override the fresh sessionid from $GITHUB_ENV")
         self.assertNotIn("KIDSNOTE_PASSWORD", mirror.get("env", {}))
 
+    def test_relabel_input_is_off_by_default_and_wired(self):
+        triggers = self.doc.get("on") or self.doc.get(True)
+        relabel_input = triggers["workflow_dispatch"]["inputs"]["relabel"]
+        self.assertEqual(relabel_input["default"], "off")
+        self.assertEqual(relabel_input["options"], ["off", "on"])
+        self.assertIn("--relabel-existing", self.step("Mirror Kidsnote → Notion")["run"])
+
     def test_scripts_referenced_by_workflow_exist(self):
         root = WORKFLOW.parents[2]
         for script in ("tools/kidsnote_fetch/kidsnote_auth.py", "tools/kidsnote_fetch/notify_once.py",

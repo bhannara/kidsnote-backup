@@ -1,4 +1,4 @@
-"""Every life-record code kidsnote's own UI knows must render as Korean, never as a raw code.
+"""Every life-record code kidsnote's own UI knows must render with kidsnote's exact wording.
 
 tests/data/kidsnote_status_labels_ko.json is kidsnote's wording, copied from
 the i18n store of its web report page. A raw `watery` leaked into published
@@ -23,57 +23,46 @@ except ImportError:  # pragma: no cover - requests not installed
 OFFICIAL = json.loads((HERE / "data" / "kidsnote_status_labels_ko.json").read_text(encoding="utf-8"))
 STATUS_FIELDS = ("meal_status", "bowel_status", "temperature_status", "mood_status", "health_status",
                  "outdoor_activity_status", "bath_status", "nail_status")
-# Codes added on 2026-09-14: their wording must be kidsnote's, word for word.
-ADDED_STATUS = {"watery", "diarrhea", "bw_no", "bw_one", "bw_two", "ml_free", "ml_one", "ml_two",
-                "slight", "bath", "shower", "cut", "ok", "true", "false"}
-ADDED_SLEEP = {"sleep_hardly", "sleep_late", "sleep_well", "slp_good", "slp_normal", "slp_bad"}
-ADDED_WEATHER = {"hail", "shower", "shower_rain"}
 RAW_CODE = re.compile(r"[a-z]+_[a-z_0-9]+|\b(?:watery|diarrhea|slight|shower|none|true|false|undefined)\b")
 
 
 @unittest.skipIf(nm is None, "notion_mirror dependencies (requests) not installed")
-class OfficialLabelCoverageTest(unittest.TestCase):
+class OfficialWordingTest(unittest.TestCase):
     def test_fixture_is_complete(self):
         for field in STATUS_FIELDS + ("sleep_hour", "weather", "activity_rate"):
             with self.subTest(field=field):
                 self.assertTrue(OFFICIAL.get(field), f"fixture has no codes for {field}")
 
-    def test_every_status_code_has_a_korean_label(self):
+    def test_status_codes_use_kidsnote_wording(self):
         for field in STATUS_FIELDS:
-            for code in OFFICIAL[field]:
+            for code, label in OFFICIAL[field].items():
                 with self.subTest(field=field, code=code):
-                    self.assertIn(code, nm.STATUS_KO)
+                    self.assertEqual(nm.STATUS_KO.get(code), label)
 
-    def test_every_sleep_code_has_a_korean_label(self):
-        for code in OFFICIAL["sleep_hour"]:
+    def test_sleep_codes_use_kidsnote_wording(self):
+        for code, label in OFFICIAL["sleep_hour"].items():
             with self.subTest(code=code):
-                self.assertIn(code, nm.SLEEP_HOUR_KO)
+                self.assertEqual(nm.SLEEP_HOUR_KO.get(code), label)
 
-    def test_every_weather_code_is_labelled_or_hidden(self):
-        for code in OFFICIAL["weather"]:
+    def test_weather_codes_use_kidsnote_wording_or_are_hidden(self):
+        for code, label in OFFICIAL["weather"].items():
             with self.subTest(code=code):
-                self.assertTrue(code in nm.WEATHER_KO or code in nm.WEATHER_HIDDEN)
-        self.assertEqual({c for c, label in OFFICIAL["weather"].items() if label == "표시안함"},
-                         set(nm.WEATHER_HIDDEN))
+                if label == "표시안함":
+                    self.assertIn(code, nm.WEATHER_HIDDEN)
+                    self.assertNotIn(code, nm.WEATHER_KO)
+                else:
+                    self.assertIn(code, nm.WEATHER_KO)
+                    emoji, _, text = nm.WEATHER_KO[code].partition(" ")
+                    self.assertEqual(text, label)
+                    self.assertTrue(emoji and not emoji.isalnum(), "keep the leading emoji (page titles use it)")
 
-    def test_added_codes_use_kidsnote_wording(self):
-        official_status = {}
-        for field in STATUS_FIELDS:
-            official_status.update(OFFICIAL[field])
-        for code in ADDED_STATUS:
-            with self.subTest(code=code):
-                self.assertEqual(nm.STATUS_KO[code], official_status[code])
-        for code in ADDED_SLEEP:
-            with self.subTest(code=code):
-                self.assertEqual(nm.SLEEP_HOUR_KO[code], OFFICIAL["sleep_hour"][code])
-        for code in ADDED_WEATHER:
-            with self.subTest(code=code):
-                self.assertEqual(nm.WEATHER_KO[code].split(" ", 1)[-1], OFFICIAL["weather"][code])
+    def test_activity_rate_uses_kidsnote_wording(self):
         self.assertEqual(nm.ACTIVITY_RATE_KO, OFFICIAL["activity_rate"])
 
-    def test_shared_status_table_has_no_conflicting_new_words(self):
-        # STATUS_KO is shared by all *_status fields; a new code must mean the same thing everywhere.
-        for code in ADDED_STATUS:
+    def test_shared_status_table_has_no_conflicting_words(self):
+        # STATUS_KO is shared by every *_status field; a code must mean the same thing everywhere.
+        codes = {code for field in STATUS_FIELDS for code in OFFICIAL[field]}
+        for code in codes:
             labels = {OFFICIAL[f][code] for f in STATUS_FIELDS if code in OFFICIAL[f]}
             with self.subTest(code=code):
                 self.assertEqual(len(labels), 1, labels)
@@ -92,9 +81,7 @@ class LifeRecordChipsTest(unittest.TestCase):
     def test_codes_that_leaked_before_are_korean_now(self):
         bits = self.bits(meal_status="fixed", sleep_hour="sleep_hardly", bowel_status="watery",
                          temperature_status="normal")
-        self.assertIn("💩 배변 묽음", bits)
-        self.assertIn("💤 수면 잠을 설쳤어요", bits)
-        self.assertNoRawCodes(bits)
+        self.assertEqual(bits, ["🍽️ 식사 정량", "💤 수면 잠을 설쳤어요", "💩 배변 묽음", "🌡️ 체온 정상"])
         self.assertIn("💩 배변 설사", self.bits(bowel_status="diarrhea"))
 
     def test_every_official_code_renders_without_raw_code(self):

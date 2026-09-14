@@ -1121,6 +1121,8 @@ fork repo → **`Actions`** 탭 → 빨간색 ❌ run을 클릭하면 **`키즈�
 
 대부분의 경우 Sync fork만 하면 다음 cron부터 새 코드가 자동 적용돼서 별도 작업 불필요. 다만 **LLM prompt 개선**이 포함된 업데이트라면 기존 알림장의 AI callout은 옛 prompt 결과 그대로 남아 있습니다 — 다 새로 만들고 싶으면 `Actions → Kidsnote → Notion mirror → Run workflow` 폼에서 `force_refresh=on`으로 한 번 실행 (첫 백업과 같은 시간 소요, cron 자동 재개로 끝까지 진행). 이미 노션이 만족스러우면 굳이 안 돌려도 OK.
 
+예전 알림장 페이지에 영어 코드(`watery` 등)나 옛 표현이 남아 있으면, 같은 폼에서 `relabel=on`으로 한 번 실행하세요. 페이지·사진·링크는 그대로 두고 해당 문구만 고칩니다.
+
 ---
 
 <a id="자주-묻는-질문"></a>

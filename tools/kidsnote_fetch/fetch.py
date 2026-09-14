@@ -658,6 +658,10 @@ def main(argv: list[str] | None = None) -> int:
                          "after prompt/LLM changes so old callouts get "
                          "regenerated. Sentinel dashboard pages are never "
                          "touched by this — they're always replaced anyway.")
+    ap.add_argument("--relabel-existing", action="store_true",
+                    help="Rewrite outdated label text (life-record chips, weather callout, "
+                         "bowel lines) on already-published report pages in place, only where "
+                         "it matches what an older version rendered. Pages keep their links.")
     ap.add_argument("--dump-raw", action="store_true",
                     help="Dump the raw /reports/ JSON to backup_root for inspection. "
                          "Ignored when --no-local-save is set.")
@@ -845,6 +849,21 @@ def main(argv: list[str] | None = None) -> int:
                 _LOGGER.info("  detail enrich %d/%d done", i, len(reports))
         reports = enriched
         _LOGGER.info("detail enrich complete")
+
+    # ---- --relabel-existing: fix label wording on already-published pages ----
+    if args.relabel_existing and mirror is not None and reports:
+        if args.force_refresh:
+            _LOGGER.info("🏷️ Relabel skipped: --force-refresh re-publishes every page anyway")
+        else:
+            from relabel import relabel_report_pages  # local module
+            _LOGGER.info("🏷️ Relabel: checking %d published report pages...",
+                         sum(1 for r in reports if int(r.get("id") or 0) in page_map))
+            relabel_counts = relabel_report_pages(
+                mirror, reports, page_map,
+                time_left=lambda: _remaining_budget() - DASHBOARD_RESERVE_SEC,
+            )
+            _LOGGER.info("🏷️ Relabel done: %s",
+                         ", ".join(f"{k}={v}" for k, v in relabel_counts.items()))
 
     # ---- local save (optional) -----
     total_new_files = 0

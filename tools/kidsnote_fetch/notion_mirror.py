@@ -485,17 +485,17 @@ MAX_BLOCK_TEXT = 1900                 # Notion paragraph rich_text limit (2000).
 
 # Kidsnote life-record status codes → human Korean. Unknown values are
 # rendered as-is, so missing entries here just degrade gracefully.
-# Wording for codes added 2026-09-14 is copied from kidsnote's own web UI
-# (the report page's i18n store, tests/data/kidsnote_status_labels_ko.json);
-# earlier entries keep their original wording so published pages stay consistent.
+# Wording is copied from kidsnote's own web UI (the report page's i18n store,
+# tests/data/kidsnote_status_labels_ko.json) so pages read exactly like the
+# app. Codes kidsnote's UI no longer lists keep their earlier wording.
 SLEEP_HOUR_KO = {
-    "no_sleep": "안 잤음",
+    "no_sleep": "잠을 안 잤어요",
     "none": "안 잠",
     "below_1": "1시간 미만",
     "under_30m": "30분 이내",
     "30m_to_1": "30분~1시간",
-    "1_to_1.5": "1~1.5시간",
-    "1.5_to_2": "1.5~2시간",
+    "1_to_1.5": "1시간~1시간30분",
+    "1.5_to_2": "1시간30분~2시간",
     "over_2": "2시간 이상",
     "sleep_hardly": "잠을 설쳤어요",
     "sleep_late": "늦잠 잤어요",
@@ -507,16 +507,16 @@ SLEEP_HOUR_KO = {
 STATUS_KO = {
     "good": "좋음",
     "average": "보통",
-    "bad": "안 좋음",
+    "bad": "나쁨",
     "normal": "정상",
-    "high": "높음",
+    "high": "고열",
     "low": "낮음",
     "soft": "묽음",
-    "hard": "딱딱",
-    "none": "없음",
-    "fixed": "정해진 식단",
-    "more": "많이 먹음",
-    "less": "적게 먹음",
+    "hard": "딱딱함",
+    "none": "안했음",
+    "fixed": "정량",
+    "more": "많이",
+    "less": "적게",
     "sick": "아픔",
     "fine": "양호",
     "trimmed": "정리됨",
@@ -549,16 +549,16 @@ ACTIVITY_RATE_KO = {"10": "적극적", "20": "보통", "30": "소극적"}
 WEATHER_KO = {
     # Codes the live kidsnote API actually uses (sampled from 391 reports):
     "sunny": "☀️ 맑음",
-    "partly_cloudy": "⛅ 구름 조금",
-    "mostly_cloudy": "🌥️ 구름 많음",
+    "partly_cloudy": "⛅ 구름조금",
+    "mostly_cloudy": "🌥️ 구름많음",
     "overcast": "☁️ 흐림",
     "fog": "🌫️ 안개",
     "rain": "🌧️ 비",
-    "sunny_after_rain": "🌈 비온 뒤 맑음",
+    "sunny_after_rain": "🌈 비온후갬",
     "snow": "❄️ 눈",
     "yellow_sand": "🟡 황사",
-    "thunderstorm": "⛈️ 천둥번개",
-    "mixed_rain_snow": "🌨️ 진눈깨비",
+    "thunderstorm": "⛈️ 낙뢰",
+    "mixed_rain_snow": "🌨️ 눈비/비눈",
     # Fallbacks for variants that may show up at other daycares:
     "cloudy": "☁️ 흐림",
     "rainy": "🌧️ 비",
@@ -1162,16 +1162,9 @@ class NotionMirror:
             },
         }
 
-    def _build_children(
-        self,
-        report: dict[str, Any],
-        image_upload_ids: list[str],
-        video_upload_ids: list[str],
-        file_upload_ids: list[tuple[str, str]],  # list of (id, filename)
-    ) -> list[dict[str, Any]]:
-        blocks: list[dict[str, Any]] = []
-
-        # Metadata header (gray, single line) — author role depends on author.type
+    @staticmethod
+    def _meta_bits(report: dict[str, Any]) -> list[str]:
+        """Author · class · date parts of the gray meta line (life-record chips are appended later)."""
         meta_bits: list[str] = []
         atype = (report.get("author") or {}).get("type") or ""
         aname = report.get("author_name") or (report.get("author") or {}).get("name") or ""
@@ -1186,6 +1179,19 @@ class NotionMirror:
             meta_bits.append(f"{report['class_name']}")
         if report.get("date_written"):
             meta_bits.append(f"작성 {report['date_written']}")
+        return meta_bits
+
+    def _build_children(
+        self,
+        report: dict[str, Any],
+        image_upload_ids: list[str],
+        video_upload_ids: list[str],
+        file_upload_ids: list[tuple[str, str]],  # list of (id, filename)
+    ) -> list[dict[str, Any]]:
+        blocks: list[dict[str, Any]] = []
+
+        # Metadata header (gray, single line) — author role depends on author.type
+        meta_bits = self._meta_bits(report)
         if meta_bits:
             blocks.append(self._para(" · ".join(meta_bits), color="gray"))
 

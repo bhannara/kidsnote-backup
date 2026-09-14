@@ -43,6 +43,12 @@ on:
         default: "off"
         type: choice
         options: ["off", "on"]
+      relabel:
+        description: "🏷️ 예전 페이지 문구 고치기 — 이미 백업된 알림장에 남은 영어 코드(watery 등)나 옛 표현을 키즈노트 표현으로 고칩니다. 페이지·사진·링크는 그대로. 코드 업데이트 후 한 번만. 평소엔 off."
+        required: false
+        default: "off"
+        type: choice
+        options: ["off", "on"]
       # ---- Multi-child accounts ----
       # Like the AI master toggle, the child selector now lives in repo
       # Secrets/Variables (``KIDSNOTE_CHILD_NAME``) rather than as a
@@ -260,6 +266,9 @@ jobs:
           fi
           if [ "${{ inputs.force_refresh }}" = "on" ]; then
             ARGS+=( "--force-refresh" )
+          fi
+          if [ "${{ inputs.relabel }}" = "on" ]; then
+            ARGS+=( "--relabel-existing" )
           fi
           python tools/kidsnote_fetch/fetch.py "${ARGS[@]}"
 
