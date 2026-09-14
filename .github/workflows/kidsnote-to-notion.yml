@@ -14,8 +14,13 @@
 #   KIDSNOTE_USERNAME         kidsnote login id
 #   KIDSNOTE_PASSWORD         kidsnote password
 #                             (or KIDSNOTE_SESSION_COOKIE: `sessionid` cookie, expires in 14 days)
-#   NOTION_TOKEN              internal integration token from notion.so/profile/integrations
-#   NOTION_DATABASE_ID        32-char hex id from your Notion DB URL
+#   KIDSNOTE_CHILD_NAME       the child's name (or part of it)
+#   NOTION_TOKEN              Notion connection token (app.notion.com/developers/connections)
+#   NOTION_DATABASE_ID        link of the Notion page to back up into (a blank page is fine:
+#                             its database is created on the first run), or a database id
+#   AI_FEATURES               on / off
+# More children in the same fork: KIDSNOTE_CHILD_NAME_N + NOTION_DATABASE_ID_N
+# (N = 2-5); the plan job starts one parallel backup job per child.
 
 name: Kidsnote → Notion mirror
 
@@ -59,11 +64,10 @@ on:
       # and re-dispatch manually each time. Single source of truth via
       # secret keeps cron and manual dispatch in sync without surprise.
       #
-      # Per-fork: ``KIDSNOTE_CHILD_NAME`` = name substring (e.g. "하린").
-      # Multi-child in ONE fork: also set ``KIDSNOTE_CHILD_NAME_2``,
-      # ``KIDSNOTE_CHILD_NAME_3`` etc with matching session/db slots.
-      # See README "자녀가 여러 명일 때" section for the recommended
-      # one-fork-per-child layout (parallel runs, ~2× faster).
+      # ``KIDSNOTE_CHILD_NAME`` = name substring (e.g. "하린"). More children
+      # in the same fork: ``KIDSNOTE_CHILD_NAME_2`` + ``NOTION_DATABASE_ID_2``
+      # (up to _5); the plan job starts one parallel job per child. GitHub
+      # allows only one fork per account, so there is no fork-per-child.
 
       # ---- AI master toggle: secret/variable AI_FEATURES (only) ----
       # The AI master toggle lives ONLY in repo Secrets/Variables now —
