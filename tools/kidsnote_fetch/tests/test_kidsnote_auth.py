@@ -348,6 +348,20 @@ class MainTest(KidsnoteTestCase):
             self.assertEqual(code, 1)
 
 
+class ListChildrenTest(KidsnoteTestCase):
+    def test_lists_children_for_a_valid_session(self):
+        self.kn.valid_sessions.add(SESSIONID)
+        self.kn.children = [{"id": 1, "name": "첫째"}, {"id": 2, "name": "둘째"}]
+        self.assertEqual([c["id"] for c in ka.list_children(SESSIONID)], [1, 2])
+
+    def test_rejected_session(self):
+        self.assertAuthError("session_expired", ka.list_children, SESSIONID)
+
+    def test_server_trouble(self):
+        self.kn.scripts["children"] = [(502, {}, "")] * 3
+        self.assertAuthError("server_error", ka.list_children, SESSIONID)
+
+
 class HintsTest(unittest.TestCase):
     def test_every_reason_raised_has_a_single_line_hint(self):
         source = Path(ka.__file__).read_text(encoding="utf-8")

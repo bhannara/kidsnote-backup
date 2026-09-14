@@ -3,7 +3,7 @@
 # file through "Sync fork" but the job is skipped there. No secrets and no
 # network: kidsnote and the GitHub API are replaced by a local fake server.
 
-name: Unit tests (개발용)
+name: 개발자용 테스트 (사용자는 실행할 필요 없음)
 
 on:
   push:

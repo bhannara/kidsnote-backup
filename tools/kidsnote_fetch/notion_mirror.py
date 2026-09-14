@@ -33,6 +33,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from secret_input import clean_secret, normalize_notion_id, normalize_token  # local module
+
 
 def _build_retrying_session() -> requests.Session:
     """A requests Session that automatically backs off and retries on
@@ -693,8 +695,10 @@ class NotionMirror:
         session: requests.Session | None = None,
         timeout: int = 60,
     ) -> None:
-        self.token = token
-        self.database_id = database_id
+        # Secrets often arrive with stray whitespace or a BOM, and the
+        # database setting as a whole Notion link instead of the bare id.
+        self.token = normalize_token(token)
+        self.database_id = normalize_notion_id(database_id) or clean_secret(database_id)
         self.max_image_bytes = max_image_bytes
         self.strip_exif_gps = strip_exif_gps
         self.session = session or _build_retrying_session()
@@ -737,99 +741,134 @@ class NotionMirror:
         import time as _t
         return (_t.monotonic() - self._dashboard_start_time) > self.dashboard_max_seconds
 
-    def _maybe_recover_db_id_from_page(self) -> None:
-        """Auto-recovery for the most common operator mistake: pasting the
-        parent page URL instead of the DB URL into NOTION_DATABASE_ID.
+    BACKUP_DATABASE_TITLE = "키즈노트 백업"
 
-        Notion returns 400 with ``"is a page, not a database. Use the
-        retrieve page API instead"`` when this happens. We catch that,
-        list the page's children, find the inline ``child_database``
-        block, and swap its id in as ``self.database_id``. Logs both
-        ids so the operator sees what got swapped and can update their
-        secret if they want the canonical form.
+    def _maybe_recover_db_id_from_page(self) -> None:
+        """Make NOTION_DATABASE_ID point at a usable database.
+
+        People paste one of three things: a database link (used as is), the
+        link of a page that already holds an inline database (that database is
+        used), or a blank page, which the setup guide asks for because it is
+        the easiest to get right (the backup database is created inside it).
         """
         try:
             probe = self.session.get(
                 f"{NOTION_API}/databases/{self.database_id}",
-                headers={
-                    "Authorization": f"Bearer {self.token}",
-                    "Notion-Version": NOTION_VERSION,
-                },
+                headers=self._headers(),
                 timeout=self.timeout,
             )
         except Exception:
-            return  # network hiccup; let downstream handle
+            return  # network hiccup; the schema request right after reports it
         if probe.status_code != 400:
             return
         body = probe.text or ""
         if "is a page" not in body and "page, not a database" not in body:
             return
         page_id = self.database_id
-        _LOGGER.warning(
-            "NOTION_DATABASE_ID %s looks like a parent page id, not a "
-            "database id. Probing the page for an inline child_database...",
-            page_id,
-        )
-        try:
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {"page_size": 100}
+            if cursor:
+                params["start_cursor"] = cursor
             r = self.session.get(
                 f"{NOTION_API}/blocks/{page_id}/children",
-                headers={
-                    "Authorization": f"Bearer {self.token}",
-                    "Notion-Version": NOTION_VERSION,
-                },
-                params={"page_size": 50},
+                headers=self._headers(),
+                params=params,
                 timeout=self.timeout,
             )
-            r.raise_for_status()
-        except Exception as e:
-            raise RuntimeError(
-                f"NOTION_DATABASE_ID {page_id!r} is a page id but we "
-                f"couldn't list its blocks to auto-recover: {e}"
-            ) from e
-        children = r.json().get("results") or []
-        for blk in children:
-            if blk.get("type") == "child_database":
-                real_id = (blk.get("id") or "").replace("-", "")
-                if not real_id:
-                    continue
-                _LOGGER.info(
-                    "✅ Auto-recovered Notion DB id from parent page. "
-                    "Update your NOTION_DATABASE_ID secret to %s for the "
-                    "canonical (no auto-recovery) form.",
-                    real_id,
+            if not r.ok:
+                raise RuntimeError(
+                    f"노션 페이지 내용을 읽지 못했습니다 (HTTP {r.status_code}). "
+                    "그 페이지에 연결(통합)을 추가했는지 확인해 주세요."
                 )
-                self.database_id = real_id
-                return
-        raise RuntimeError(
-            f"NOTION_DATABASE_ID {page_id!r} is a page but contains no "
-            "inline database block. Open the page in Notion, hover the "
-            "DB title, click ↗ Open as full page, and use the URL that "
-            "now contains ?v=... — README 5-1 has visuals."
-        )
+            data = r.json()
+            for blk in data.get("results") or []:
+                if blk.get("type") == "child_database" and blk.get("id"):
+                    self.database_id = blk["id"].replace("-", "")
+                    _LOGGER.info("Using the database inside the NOTION_DATABASE_ID page")
+                    return
+            if not data.get("has_more"):
+                break
+            cursor = data.get("next_cursor")
+        self.database_id = self._create_backup_database(page_id)
 
-    def _resolve_schema(self) -> None:
-        """Discover the title / number / date property names from the live DB."""
-        if self._prop_report_id is not None:
-            return  # already resolved
-        # First, sanity-check the id format and auto-recover from the
-        # "operator pasted parent-page id" mistake before the real GET.
-        self._maybe_recover_db_id_from_page()
-        r = self.session.get(
-            f"{NOTION_API}/databases/{self.database_id}",
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Notion-Version": NOTION_VERSION,
+    def _create_backup_database(self, page_id: str) -> str:
+        """Create the inline backup database (이름 / 날짜 / Report ID) inside ``page_id``."""
+        r = self.session.post(
+            f"{NOTION_API}/databases",
+            headers=self._headers(),
+            json={
+                "parent": {"type": "page_id", "page_id": page_id},
+                "is_inline": True,
+                "title": [{"type": "text", "text": {"content": self.BACKUP_DATABASE_TITLE}}],
+                "properties": {
+                    "이름": {"title": {}},
+                    "날짜": {"date": {}},
+                    "Report ID": {"number": {"format": "number"}},
+                },
             },
             timeout=self.timeout,
         )
-        if r.status_code == 404:
+        if not r.ok:
             raise RuntimeError(
-                "Notion DB not found. Either the database_id is wrong or "
-                "your integration is not shared with the DB "
-                "(Notion → DB → Connections → add the integration)."
+                f"노션 페이지 안에 백업용 데이터베이스를 만들지 못했습니다 (HTTP {r.status_code}). "
+                "노션 연결(통합) 설정에서 콘텐츠 읽기·업데이트·입력 권한이 모두 켜져 있는지 확인해 주세요."
+            )
+        db_id = (r.json().get("id") or "").replace("-", "")
+        if not db_id:
+            raise RuntimeError("노션이 새 데이터베이스의 id를 돌려주지 않았습니다.")
+        _LOGGER.info("✅ Created the backup database inside the Notion page")
+        return db_id
+
+    def _database_properties(self) -> dict[str, Any]:
+        r = self.session.get(
+            f"{NOTION_API}/databases/{self.database_id}",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        if r.status_code == 401:
+            raise RuntimeError(
+                "노션 토큰(NOTION_TOKEN)이 올바르지 않습니다. "
+                "노션 연결(통합) 화면에서 토큰을 다시 복사해 시크릿을 수정해 주세요."
+            )
+        if r.status_code in (403, 404):
+            raise RuntimeError(
+                "노션 데이터베이스에 접근할 수 없습니다. 페이지에 연결(통합)을 추가했는지, "
+                "NOTION_DATABASE_ID 가 그 페이지의 링크인지 확인해 주세요."
             )
         r.raise_for_status()
-        props: dict[str, Any] = r.json().get("properties") or {}
+        return r.json().get("properties") or {}
+
+    def _resolve_schema(self) -> None:
+        """Discover the title / number / date property names, adding any that are missing."""
+        if self._prop_report_id is not None:
+            return  # already resolved
+        self._maybe_recover_db_id_from_page()
+        props = self._database_properties()
+
+        # A table made by hand may lack the number / date columns. Add them
+        # instead of failing, so any database (or a blank page) is enough.
+        missing: dict[str, Any] = {}
+        if not any(meta.get("type") == "number" for meta in props.values()):
+            name = next((n for n in ("Report ID", "키즈노트 번호") if n not in props), "Report ID 2")
+            missing[name] = {"number": {"format": "number"}}
+        if not any(meta.get("type") == "date" for meta in props.values()):
+            name = next((n for n in ("날짜", "작성일") if n not in props), "날짜 2")
+            missing[name] = {"date": {}}
+        if missing:
+            r = self.session.patch(
+                f"{NOTION_API}/databases/{self.database_id}",
+                headers=self._headers(),
+                json={"properties": missing},
+                timeout=self.timeout,
+            )
+            if not r.ok:
+                raise RuntimeError(
+                    f"노션 데이터베이스에 필요한 열({', '.join(missing)})을 추가하지 못했습니다 "
+                    f"(HTTP {r.status_code})."
+                )
+            _LOGGER.info("Added missing Notion DB properties: %s", ", ".join(missing))
+            props = self._database_properties()
 
         def pick(candidates: tuple[str, ...], wanted_type: str) -> str | None:
             for name in candidates:
@@ -848,10 +887,7 @@ class NotionMirror:
         if not self._prop_title:
             raise RuntimeError("DB has no title property (every Notion DB has one - check the DB).")
         if not self._prop_report_id:
-            raise RuntimeError(
-                "DB is missing a Number property for `Report ID`. "
-                "Add a Number column named 'Report ID' (or 'Report ID' / '리포트 ID')."
-            )
+            raise RuntimeError("노션 데이터베이스에 숫자 열(Report ID)이 없습니다.")
         _LOGGER.info(
             "Notion DB schema resolved: title=%r, number=%r, date=%r",
             self._prop_title, self._prop_report_id, self._prop_date,

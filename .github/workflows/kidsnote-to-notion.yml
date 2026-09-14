@@ -116,28 +116,64 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  mirror:
+  # Which children to back up: always slot 1 (its check reports missing
+  # settings), plus slot N when the NOTION_DATABASE_ID_N secret is set. Only
+  # slot labels leave this job, never secret values.
+  plan:
     runs-on: ubuntu-latest
-    # Long timeout: a 1-year backfill with photo-heavy reports
-    # (avg 15-25 images/report + Ollama-driven LLM dashboards) ran past
-    # the 6h cap on the first try, so we ask for 12h. GitHub-hosted
-    # runners cap public repos at 35 hours of wall-time per workflow.
-    # Re-runs after the first backfill are fast (dedup skips done).
-    timeout-minutes: 720
+    outputs:
+      slots: ${{ steps.find.outputs.slots }}
+    steps:
+      - name: Find configured children
+        id: find
+        env:
+          DB_2: ${{ secrets.NOTION_DATABASE_ID_2 }}
+          DB_3: ${{ secrets.NOTION_DATABASE_ID_3 }}
+          DB_4: ${{ secrets.NOTION_DATABASE_ID_4 }}
+          DB_5: ${{ secrets.NOTION_DATABASE_ID_5 }}
+        run: |
+          slots='[{"suffix":"","label":"1"}'
+          for n in 2 3 4 5; do
+            var="DB_$n"
+            if [ -n "$(printf '%s' "${!var}" | tr -d '[:space:]')" ]; then
+              slots="$slots,{\"suffix\":\"_$n\",\"label\":\"$n\"}"
+            fi
+          done
+          echo "slots=$slots]" >> "$GITHUB_OUTPUT"
+
+  # One job per child, in parallel. Child N reads KIDSNOTE_CHILD_NAME_N and
+  # NOTION_DATABASE_ID_N; NOTION_TOKEN_N falls back to NOTION_TOKEN, so one
+  # Notion connection can serve every child's page.
+  mirror:
+    needs: plan
+    name: 백업 (자녀 ${{ matrix.slot.label }})
+    runs-on: ubuntu-latest
+    # GitHub-hosted jobs stop at 6 hours regardless; fetch.py exits cleanly
+    # before that and the next cron run resumes where it left off.
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: ${{ fromJSON(needs.plan.outputs.slots) }}
 
     steps:
       - uses: actions/checkout@v4
 
-      # Log in before anything else (stdlib-only script, no pip install), so
-      # a dead login ends the run in seconds. On success the fresh sessionid
-      # is exported (masked) to later steps as KIDSNOTE_SESSION_COOKIE.
-      - name: Kidsnote login
+      # Check everything a run needs before installing anything (stdlib-only
+      # script): kidsnote login, KIDSNOTE_CHILD_NAME, Notion token and page
+      # access. A problem ends the run in seconds with a Korean hint; on
+      # success the fresh kidsnote sessionid is exported (masked) to later
+      # steps as KIDSNOTE_SESSION_COOKIE.
+      - name: Check login and settings
         id: auth
         env:
           KIDSNOTE_USERNAME: ${{ secrets.KIDSNOTE_USERNAME }}
           KIDSNOTE_PASSWORD: ${{ secrets.KIDSNOTE_PASSWORD }}
           KIDSNOTE_SESSION_COOKIE: ${{ secrets.KIDSNOTE_SESSION_COOKIE }}
-        run: python3 tools/kidsnote_fetch/kidsnote_auth.py --github
+          KIDSNOTE_CHILD_NAME: ${{ secrets[format('KIDSNOTE_CHILD_NAME{0}', matrix.slot.suffix)] || vars[format('KIDSNOTE_CHILD_NAME{0}', matrix.slot.suffix)] || '' }}
+          NOTION_TOKEN: ${{ secrets[format('NOTION_TOKEN{0}', matrix.slot.suffix)] || secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets[format('NOTION_DATABASE_ID{0}', matrix.slot.suffix)] }}
+        run: python3 tools/kidsnote_fetch/preflight.py --github
 
       # One email per outage instead of one every 6 hours: this fails (so
       # GitHub sends one failure email) only if the previous run didn't
@@ -148,6 +184,7 @@ jobs:
         if: ${{ !cancelled() && steps.auth.outputs.ok != 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          JOB_NAME: 백업 (자녀 ${{ matrix.slot.label }})
           REASON: ${{ steps.auth.outputs.reason }}
           HINT: ${{ steps.auth.outputs.hint }}
         run: python3 tools/kidsnote_fetch/notify_once.py
@@ -194,12 +231,22 @@ jobs:
         env:
           REPO_VAR_AI: ${{ vars.AI_FEATURES }}
           REPO_SECRET_AI: ${{ secrets.AI_FEATURES }}
+          GROWTH_STORY: ${{ secrets.GROWTH_STORY || vars.GROWTH_STORY }}
+          MILESTONES: ${{ secrets.MILESTONES || vars.MILESTONES }}
+          INTERESTS: ${{ secrets.INTERESTS || vars.INTERESTS }}
+          TEACHER_THANKS: ${{ secrets.TEACHER_THANKS || vars.TEACHER_THANKS }}
         run: |
-          if [ "$REPO_VAR_AI" = "on" ] || [ "$REPO_SECRET_AI" = "on" ]; then
-            echo "value=on" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=off" >> "$GITHUB_OUTPUT"
-          fi
+          # Forgiving on/off: "On", " on", "켜기" all count, so a stray space or
+          # capital letter in a secret doesn't silently flip a setting.
+          norm() { printf '%s' "$1" | sed 's/\xEF\xBB\xBF//g' | tr -d "[:space:]\"'" | tr '[:upper:]' '[:lower:]'; }
+          is_on()  { case "$(norm "$1")" in on|true|yes|y|1|켜기|켬) return 0 ;; esac; return 1; }
+          is_off() { case "$(norm "$1")" in off|false|no|n|0|끄기|끔) return 0 ;; esac; return 1; }
+          if is_on "$REPO_VAR_AI" || is_on "$REPO_SECRET_AI"; then ai=on; else ai=off; fi
+          echo "value=$ai" >> "$GITHUB_OUTPUT"
+          for name in GROWTH_STORY MILESTONES INTERESTS TEACHER_THANKS; do
+            if is_off "${!name}"; then disabled=true; else disabled=false; fi
+            echo "disable_$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')=$disabled" >> "$GITHUB_OUTPUT"
+          done
 
       - name: Cache Ollama models
         id: ollama-cache
@@ -232,9 +279,9 @@ jobs:
         if: steps.auth.outputs.ok == 'true'
         env:
           # KIDSNOTE_SESSION_COOKIE comes from $GITHUB_ENV (set by the
-          # "Kidsnote login" step). Setting it here would override it.
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          # "Check login and settings" step). Setting it here would override it.
+          NOTION_TOKEN: ${{ secrets[format('NOTION_TOKEN{0}', matrix.slot.suffix)] || secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets[format('NOTION_DATABASE_ID{0}', matrix.slot.suffix)] }}
           # Tell notion_mirror.py where Ollama lives + which model to use
           OLLAMA_HOST: "http://localhost:11434"
           OLLAMA_MODEL: "llama3.1:8b"
@@ -249,12 +296,12 @@ jobs:
           # env names. Default behavior when the secret isn't set is
           # ``on`` (= DISABLE=false) so the AI on path lights up all 4
           # dashboards out of the box.
-          KIDSNOTE_CHILD_NAME: ${{ secrets.KIDSNOTE_CHILD_NAME || vars.KIDSNOTE_CHILD_NAME || '' }}
+          KIDSNOTE_CHILD_NAME: ${{ secrets[format('KIDSNOTE_CHILD_NAME{0}', matrix.slot.suffix)] || vars[format('KIDSNOTE_CHILD_NAME{0}', matrix.slot.suffix)] || '' }}
           DISABLE_ALL_LLM: ${{ steps.ai.outputs.value == 'on' && 'false' || 'true' }}
-          DISABLE_GROWTH_STORY: ${{ (secrets.GROWTH_STORY || vars.GROWTH_STORY) == 'off' && 'true' || 'false' }}
-          DISABLE_MILESTONES: ${{ (secrets.MILESTONES || vars.MILESTONES) == 'off' && 'true' || 'false' }}
-          DISABLE_INTERESTS: ${{ (secrets.INTERESTS || vars.INTERESTS) == 'off' && 'true' || 'false' }}
-          DISABLE_TEACHER_THANKS: ${{ (secrets.TEACHER_THANKS || vars.TEACHER_THANKS) == 'off' && 'true' || 'false' }}
+          DISABLE_GROWTH_STORY: ${{ steps.ai.outputs.disable_growth_story }}
+          DISABLE_MILESTONES: ${{ steps.ai.outputs.disable_milestones }}
+          DISABLE_INTERESTS: ${{ steps.ai.outputs.disable_interests }}
+          DISABLE_TEACHER_THANKS: ${{ steps.ai.outputs.disable_teacher_thanks }}
         run: |
           set -eu
           ARGS=( "--auth-mode" "session-cookie-env" "--publish-to-notion" "--no-local-save" )
@@ -275,8 +322,8 @@ jobs:
       - name: Verify required secrets were present
         if: failure() && steps.auth.outputs.ok == 'true'
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          NOTION_TOKEN: ${{ secrets[format('NOTION_TOKEN{0}', matrix.slot.suffix)] || secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets[format('NOTION_DATABASE_ID{0}', matrix.slot.suffix)] }}
         run: |
           for s in NOTION_TOKEN NOTION_DATABASE_ID; do
             if [ -z "${!s:-}" ]; then

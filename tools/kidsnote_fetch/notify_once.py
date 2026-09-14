@@ -1,24 +1,27 @@
-"""Email the operator once per kidsnote login outage, not every 6 hours.
+"""Email the operator once per setup problem, not every 6 hours.
 
 GitHub emails the repo owner whenever a scheduled run fails. With the 6h
-cron, a lasting login problem (password changed, 2-step verification
-turned on) used to send 4 emails a day until someone fixed it. The
-workflow runs this only when the "Kidsnote login" step did not succeed:
+cron, a lasting problem (password changed, Notion connection removed) used
+to send 4 emails a day until someone fixed it. The workflow runs this only
+when the "Check login and settings" step did not succeed:
 
-  * the previous finished run had no login failure -> exit 1, so this run
+  * the previous finished run had not reported it -> exit 1, so this run
     fails and GitHub sends one email;
-  * the previous finished run already reported it  -> exit 0 with a
+  * the previous finished run already reported it -> exit 0 with a
     warning, so this run ends green and silent (backup skipped).
 
-Fixing the secret is all it takes to resume: the next run logs in and the
-chain resets. If the GitHub API can't be read, it errs on the side of
-notifying. Stdlib only, because it runs before `pip install`.
+With several children each child has its own job; JOB_NAME limits the
+lookup to that child's job so one child's problem doesn't hide another's.
+Fixing the secret is all it takes to resume: the next run passes the check
+and the chain resets. If the GitHub API can't be read, it errs on the side
+of notifying. Stdlib only, because it runs before `pip install`.
 """
 from __future__ import annotations
 
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 from collections.abc import Mapping
 
@@ -43,11 +46,12 @@ def pick_previous_run(runs: list[dict], current_run_id: str) -> dict | None:
     return None
 
 
-def run_reported(jobs: list[dict]) -> bool:
-    """True if that run executed the notify step, i.e. the outage was already reported."""
+def run_reported(jobs: list[dict], job_name: str | None = None) -> bool:
+    """True if that run executed the notify step (in ``job_name``'s job, when given)."""
     return any(
         step.get("name") == STEP_NAME and step.get("conclusion") in REPORTED_CONCLUSIONS
         for job in jobs
+        if job_name is None or job.get("name") == job_name
         for step in job.get("steps") or []
     )
 
@@ -77,7 +81,7 @@ def _get_json(url: str, token: str) -> dict:
 
 
 def already_reported(env: Mapping[str, str]) -> bool:
-    """Ask the GitHub API whether the previous finished run already reported a login failure."""
+    """Ask the GitHub API whether the previous finished run already reported a problem."""
     api = (env.get("GITHUB_API_URL") or "https://api.github.com").rstrip("/")
     repo = env["GITHUB_REPOSITORY"]
     token = env["GITHUB_TOKEN"]
@@ -87,7 +91,7 @@ def already_reported(env: Mapping[str, str]) -> bool:
     if prev is None:
         return False
     jobs = _get_json(f"{api}/repos/{repo}/actions/runs/{prev['id']}/jobs?per_page=100", token)
-    return run_reported(jobs.get("jobs") or [])
+    return run_reported(jobs.get("jobs") or [], env.get("JOB_NAME") or None)
 
 
 def _escape(message: str) -> str:
@@ -98,7 +102,7 @@ def _escape(message: str) -> str:
 def main(env: Mapping[str, str] | None = None) -> int:
     env = os.environ if env is None else env
     reason = env.get("REASON") or "unexpected"
-    hint = env.get("HINT") or "키즈노트 로그인에 실패했습니다."
+    hint = env.get("HINT") or "백업 준비 확인에 실패했습니다."
     try:
         reported = already_reported(env)
     except Exception as e:  # can't tell -> notify rather than stay silent
@@ -106,10 +110,10 @@ def main(env: Mapping[str, str] | None = None) -> int:
         reported = False
 
     if reported:
-        print("::warning title=키즈노트 로그인 실패 (이미 알림 보냄)::"
+        print("::warning title=백업 준비 확인 실패 (이미 알림 보냄)::"
               + _escape(f"{hint} [{reason}] 이미 알림을 보냈으므로 이번 백업은 조용히 건너뜁니다."))
         return 0
-    print("::error title=키즈노트 로그인 실패::" + _escape(f"{hint} [{reason}]"))
+    print("::error title=백업 준비 확인 실패::" + _escape(f"{hint} [{reason}]"))
     return 1
 
 

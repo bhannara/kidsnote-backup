@@ -231,6 +231,18 @@ def session_is_valid(sessionid: str, user_agent: str = DEFAULT_USER_AGENT) -> bo
     raise _status_error(status, "/api/v1/me/children/")
 
 
+def list_children(sessionid: str, user_agent: str = DEFAULT_USER_AGENT) -> list[dict]:
+    """Children registered on the account (dicts with at least id and name)."""
+    status, raw = _request(_opener(user_agent), "GET", "/api/v1/me/children/", cookie=sessionid)
+    if status in (401, 403):
+        raise AuthError("session_expired", "session was rejected while listing children")
+    if status != 200:
+        raise _status_error(status, "/api/v1/me/children/")
+    data = _json(raw)
+    results = data.get("results") if isinstance(data.get("results"), list) else data.get("children")
+    return [c for c in (results or []) if isinstance(c, dict)]
+
+
 def resolve_session(
     username: str | None,
     password: str | None,

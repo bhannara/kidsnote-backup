@@ -105,7 +105,7 @@ class MainTest(unittest.TestCase):
         with FakeServer(api) as srv:
             code, out = self.run_main(self.make_env(srv))
         self.assertEqual(code, 1)
-        self.assertIn("::error title=키즈노트 로그인 실패::아이디 또는 비밀번호가 틀렸습니다. [invalid_credentials]", out)
+        self.assertIn("::error title=백업 준비 확인 실패::아이디 또는 비밀번호가 틀렸습니다. [invalid_credentials]", out)
         self.assertNotIn("::warning title=", out)
 
     def test_repeat_failure_after_loud_run_is_quiet(self):
@@ -113,7 +113,7 @@ class MainTest(unittest.TestCase):
         with FakeServer(api) as srv:
             code, out = self.run_main(self.make_env(srv))
         self.assertEqual(code, 0)
-        self.assertIn("::warning title=키즈노트 로그인 실패 (이미 알림 보냄)::", out)
+        self.assertIn("::warning title=백업 준비 확인 실패 (이미 알림 보냄)::", out)
         self.assertNotIn("::error", out)
 
     def test_repeat_failure_after_quiet_run_stays_quiet(self):
@@ -176,7 +176,7 @@ class MainTest(unittest.TestCase):
     def test_defaults_when_reason_and_hint_empty(self):
         code, out = self.run_main({"REASON": "", "HINT": ""})
         self.assertEqual(code, 1)
-        self.assertIn("키즈노트 로그인에 실패했습니다. [unexpected]", out)
+        self.assertIn("백업 준비 확인에 실패했습니다. [unexpected]", out)
 
     def test_message_is_escaped(self):
         code, out = self.run_main({"REASON": "x", "HINT": "100% 실패\n두번째 줄"})
@@ -184,6 +184,31 @@ class MainTest(unittest.TestCase):
         self.assertIn("100%25 실패%0A두번째 줄", out)
         error_lines = [line for line in out.splitlines() if line.startswith("::error")]
         self.assertEqual(len(error_lines), 1)
+
+
+class PerChildJobTest(unittest.TestCase):
+    """With several children, one child's reported problem must not silence another's."""
+
+    JOBS = [{"name": "백업 (자녀 1)", "steps": [{"name": STEP, "conclusion": "skipped"}]},
+            {"name": "백업 (자녀 2)", "steps": [{"name": STEP, "conclusion": "failure"}]}]
+
+    def test_only_the_same_childs_job_counts(self):
+        self.assertTrue(notify_once.run_reported(self.JOBS, "백업 (자녀 2)"))
+        self.assertFalse(notify_once.run_reported(self.JOBS, "백업 (자녀 1)"))
+        self.assertTrue(notify_once.run_reported(self.JOBS))  # no job name: any job
+
+    def test_main_uses_job_name(self):
+        def api(req):
+            if req.path.endswith("/runs"):
+                return 200, {}, {"workflow_runs": [run_entry(10, "failure")]}
+            return 200, {}, {"jobs": self.JOBS}
+        with FakeServer(api) as srv:
+            env = {"GITHUB_API_URL": srv.url, "GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": CURRENT_RUN,
+                   "GITHUB_TOKEN": "t", "REASON": "notion_no_access", "HINT": "x"}
+            with redirect_stdout(io.StringIO()):
+                loud = notify_once.main(dict(env, JOB_NAME="백업 (자녀 1)"))
+                quiet = notify_once.main(dict(env, JOB_NAME="백업 (자녀 2)"))
+        self.assertEqual((loud, quiet), (1, 0))
 
 
 if __name__ == "__main__":

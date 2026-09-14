@@ -14,6 +14,7 @@ class FakeKidsnote:
 
     def __init__(self, users: dict[str, str] | None = None) -> None:
         self.users = dict(users or {})
+        self.children: list[dict] = [{"id": 1, "name": "테스트아이"}]
         self.two_factor = False
         self.second_factors: list[dict] = [{"id": 7, "auth_type": 1}]
         self.issue_cookie = True
@@ -55,7 +56,7 @@ class FakeKidsnote:
             jar = SimpleCookie(req.headers.get("cookie", ""))
             sid = jar["sessionid"].value if "sessionid" in jar else ""
             if sid in self.valid_sessions:
-                return 200, {}, {"count": 1, "results": [{"id": 1, "name": "테스트아이"}]}
+                return 200, {}, {"count": len(self.children), "results": self.children}
             return 401, {}, {"detail": "Authentication credentials were not provided."}
 
         return 404, {}, {"detail": "Not found."}

@@ -37,6 +37,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from secret_input import clean_secret, mask_name  # local module
+
 try:
     import browser_cookie3
 except ImportError:  # surface a clear hint before the first call
@@ -544,21 +546,21 @@ def _pick_child(
     if child_id is not None:
         match = next((c for c in children if c.get("id") == child_id), None)
         if match is None:
-            avail = ", ".join(f"{c.get('id')}={c.get('name')}" for c in children)
+            avail = ", ".join(f"{c.get('id')}={mask_name(c.get('name'))}" for c in children)
             sys.exit(f"--child-id {child_id} not in your profile. Available: {avail}")
         return match
     if child_name:
-        needle = child_name.strip().lower()
+        needle = clean_secret(child_name).lower()
         matches = [c for c in children if needle in (c.get("name") or "").lower()]
         if len(matches) == 0:
-            avail = ", ".join(f"{c.get('id')}={c.get('name')}" for c in children)
+            avail = ", ".join(f"{c.get('id')}={mask_name(c.get('name'))}" for c in children)
             sys.exit(
-                f"--child-name {child_name!r} matched no child. Available: {avail}"
+                f"--child-name {mask_name(child_name)!r} matched no child. Available: {avail}"
             )
         if len(matches) > 1:
-            avail = ", ".join(f"{c.get('id')}={c.get('name')}" for c in matches)
+            avail = ", ".join(f"{c.get('id')}={mask_name(c.get('name'))}" for c in matches)
             sys.exit(
-                f"--child-name {child_name!r} ambiguous ({len(matches)} matches): "
+                f"--child-name {mask_name(child_name)!r} ambiguous ({len(matches)} matches): "
                 f"{avail}. Use --child-id instead for an exact pick."
             )
         return matches[0]
@@ -804,7 +806,7 @@ def main(argv: list[str] | None = None) -> int:
         _LOGGER.info(
             "Account has %d child(ren): %s",
             len(children),
-            ", ".join(f"#{i + 1} id={c.get('id')} name={c.get('name')}"
+            ", ".join(f"#{i + 1} id={c.get('id')} name={mask_name(c.get('name'))}"
                       for i, c in enumerate(children)),
         )
     # Resolve which child to mirror. CLI flag wins over env var so a manual
@@ -813,7 +815,7 @@ def main(argv: list[str] | None = None) -> int:
     target = _pick_child(children, args.child_id, child_name, args.child_index)
     _LOGGER.info(
         "Selected child: id=%s name=%s (override with --child-id / --child-name / KIDSNOTE_CHILD_NAME)",
-        target.get("id"), target.get("name"),
+        target.get("id"), mask_name(target.get("name")),
     )
 
     reports = _list_reports(sess, int(target["id"]))
