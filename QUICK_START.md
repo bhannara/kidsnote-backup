@@ -74,37 +74,33 @@ https://www.notion.so/내이름/238f5e29c0894adfb6c4d8e1a5b2c3d4?v=...
 
 ---
 
-## 6️⃣ 키즈노트 sessionid 쿠키 추출 (3분)
+## 6️⃣ 키즈노트 아이디·비밀번호 확인 (1분)
 
-1. Chrome으로 [www.kidsnote.com](https://www.kidsnote.com) 접속 + 로그인
-2. **F12** (또는 `Ctrl+Shift+I`) → 상단 메뉴 **`Application`** 클릭
-3. 좌측 사이드바 **`Storage` → `Cookies` → `https://www.kidsnote.com`** 클릭
-4. 오른쪽 표에서 다음 행을 찾아 **`Value`** 컬럼 값을 복사 (메모장):
-   - `Name` = `sessionid`
-   - `Domain` = `.kidsnote.com` (앞에 점)
+따로 할 일은 없습니다. [www.kidsnote.com](https://www.kidsnote.com)에 로그인할 때 쓰는 **아이디·비밀번호**를 7번에서 그대로 입력합니다.
 
-![sessionid 쿠키 위치](images/chrome-cookie-sessionid.png)
-
-✅ 메모장에 30자 내외 영문+숫자 쿠키값이 있으면 성공.
+✅ [www.kidsnote.com](https://www.kidsnote.com)에서 그 아이디·비밀번호로 로그인되면 성공.
 
 ---
 
-## 7️⃣ GitHub Secrets 5개 등록 (5분)
+## 7️⃣ GitHub Secrets 6개 등록 (5분)
 
 1. 본인 fork 페이지 (`https://github.com/내깃허브아이디/kidsnote-backup`) → 메뉴줄 **`Settings`** 클릭
    - ⚠️ 우측 상단 프로필 옆 Settings가 아닌 **repo 안의 Settings**
 2. 좌측 사이드바 **`Secrets and variables` → `Actions`** 클릭
-3. **`New repository secret`** 버튼을 **5번** 클릭해서 다음 5개를 모두 등록:
+3. **`New repository secret`** 버튼을 **6번** 클릭해서 다음 6개를 모두 등록:
 
 | Name (대소문자·언더바 정확히) | 값 |
 |---|---|
 | `NOTION_TOKEN` | 3번에서 받은 토큰 |
 | `NOTION_DATABASE_ID` | 5번에서 추출한 32자 hex |
-| `KIDSNOTE_SESSION_COOKIE` | 6번에서 복사한 쿠키 |
+| `KIDSNOTE_USERNAME` | 키즈노트에 로그인할 때 쓰는 **아이디** |
+| `KIDSNOTE_PASSWORD` | 키즈노트 **비밀번호** |
 | `KIDSNOTE_CHILD_NAME` | 백업할 자녀 이름 (예: `우하린`) |
 | `AI_FEATURES` | **`off` 권장** — 자세한 설명은 아래 안내 |
 
-✅ Secrets 목록에 위 5개 이름이 정확히 나타나면 성공.
+✅ Secrets 목록에 위 6개 이름이 정확히 나타나면 성공.
+
+> 🔒 **비밀번호도 안전합니다**: 시크릿은 암호화되어 저장되고, 등록 후에는 본인도 값을 다시 볼 수 없으며, 실행 로그에 나오지 않고, fork한 사람을 포함해 다른 누구에게도 보이지 않습니다.
 
 > 👶 **`KIDSNOTE_CHILD_NAME`는 자녀 1명이라도 꼭 입력**. 부분 일치(대소문자 무시) 방식이라 글자 수 제한 없음 — `우하린`도 `정에스더`도 `유주`도 OK. 풀네임 또는 일부 어느 것을 적어도 같은 결과 (예: `정에스더`라면 `정에스더`/`에스더`/`스더` 다 매칭).
 
@@ -141,6 +137,7 @@ https://www.notion.so/내이름/238f5e29c0894adfb6c4d8e1a5b2c3d4?v=...
 - **자녀가 2명 이상**이면 → [`자녀가 여러 명이거나 AI 편지를 끄고 싶을 때`](README.md#advanced-multichild-and-ai-off) 섹션
 - **AI 가공을 켜고/끄거나 일부만 끄고 싶음** → [`B. AI 가공 켜기/끄기`](README.md#b-ai-가공을-안-쓰고-단순-백업-통계만-원할-때)
 - **어디서 막혔음 / 에러 발생** → [`문제 해결 (자주 나오는 에러)`](README.md#-문제-해결-자주-나오는-에러)
-- **30일 후 cookie 만료 / 코드 업데이트 받기** → [`두 번째 이후 백업`](README.md#-두-번째-이후-백업--거의-안-해도-됨), [`Sync fork`](README.md#-코드-업데이트가-있을-때--내-fork-동기화)
+- **키즈노트 로그인 실패 메일이 왔음** → [`키즈노트 로그인 실패 메일이 왔을 때`](README.md#키즈노트-로그인-실패-메일이-왔을-때)
+- **셋업 이후 할 일 / 코드 업데이트 받기** → [`두 번째 이후 백업`](README.md#-두-번째-이후-백업--거의-안-해도-됨), [`Sync fork`](README.md#-코드-업데이트가-있을-때--내-fork-동기화)
 - **노션 페이지를 웹에 공개하고 싶음** → [`(선택) 노션 페이지 웹 공개`](README.md#-선택-노션-페이지를-웹에-공개하기)
 - **자주 묻는 질문** → [`자주 묻는 질문`](README.md#-자주-묻는-질문)

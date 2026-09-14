@@ -133,30 +133,18 @@ jobs:
           KIDSNOTE_SESSION_COOKIE: ${{ secrets.KIDSNOTE_SESSION_COOKIE }}
         run: python3 tools/kidsnote_fetch/kidsnote_auth.py --github
 
-      # One email per outage instead of one every 6 hours. The first failed
-      # login fails this step, so GitHub sends a single failure email. While
-      # the login keeps failing, later runs see the previous run already
-      # reported it and finish green with a warning. Fixing the secret is
-      # all it takes to resume: the next cron run backs up normally.
+      # One email per outage instead of one every 6 hours: this fails (so
+      # GitHub sends one failure email) only if the previous run didn't
+      # already report the login failure; otherwise the run ends green with
+      # a warning. Fixing the secret is enough, the next run resumes.
+      # !cancelled(): also report when the login step itself crashed.
       - name: Kidsnote login failed - notify once
-        if: steps.auth.outputs.ok != 'true'
+        if: ${{ !cancelled() && steps.auth.outputs.ok != 'true' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           REASON: ${{ steps.auth.outputs.reason }}
           HINT: ${{ steps.auth.outputs.hint }}
-        run: |
-          # Latest finished run of this workflow (the current one is still in progress).
-          prev=$(gh run list -R "$GITHUB_REPOSITORY" --workflow kidsnote-to-notion.yml             --status completed --limit 20 --json databaseId,conclusion             --jq 'map(select(.conclusion == "success" or .conclusion == "failure")) | .[0].databaseId // ""')
-          reported=0
-          if [ -n "$prev" ]; then
-            reported=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$prev/jobs"               --jq '[.jobs[].steps[] | select(.name == "Kidsnote login failed - notify once" and .conclusion != "skipped")] | length')
-          fi
-          if [ "$reported" -gt 0 ]; then
-            echo "::warning title=키즈노트 로그인 실패 (이미 알림 보냄)::$HINT [$REASON] 백업은 건너뜁니다."
-            exit 0
-          fi
-          echo "::error title=키즈노트 로그인 실패::$HINT [$REASON]"
-          exit 1
+        run: python3 tools/kidsnote_fetch/notify_once.py
 
       - name: Set up Python
         if: steps.auth.outputs.ok == 'true'

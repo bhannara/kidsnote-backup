@@ -693,14 +693,19 @@ def main(argv: list[str] | None = None) -> int:
         # any Notion work. In CI the "Kidsnote login" workflow step already
         # logged in and passes the fresh sessionid via KIDSNOTE_SESSION_COOKIE.
         try:
-            cookie_val, source = resolve_session(username, password, cookie_val, USER_AGENT)
+            session = resolve_session(username, password, cookie_val, USER_AGENT)
         except AuthError as e:
             sys.exit(f"Kidsnote login failed ({e.reason}): {e}")
+        if session.login_error is not None:
+            _LOGGER.warning(
+                "Kidsnote id/password login failed (%s: %s); continuing with KIDSNOTE_SESSION_COOKIE",
+                session.login_error.reason, session.login_error,
+            )
         sess = _baseline_session()
-        sess.cookies.set("sessionid", cookie_val, domain="www.kidsnote.com", path="/")
+        sess.cookies.set("sessionid", session.sessionid, domain="www.kidsnote.com", path="/")
         _LOGGER.info(
             "Kidsnote session ready (%s)",
-            "fresh login" if source == "login" else "KIDSNOTE_SESSION_COOKIE",
+            "fresh login" if session.source == "login" else "KIDSNOTE_SESSION_COOKIE",
         )
     else:
         sess = _load_session_from_browser(args.browser)
