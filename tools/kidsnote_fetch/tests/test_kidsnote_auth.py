@@ -166,9 +166,28 @@ class LoginTest(KidsnoteTestCase):
         self.assertAuthError("server_error", ka.login, USER, PASSWORD)
 
     def test_unexpected_status_is_not_retried(self):
-        self.kn.scripts["login"] = [(409, {}, {"err_code": "already_login"})]
+        self.kn.scripts["login"] = [(418, {}, {"detail": "teapot"})]
         self.assertAuthError("unexpected", ka.login, USER, PASSWORD)
         self.assertEqual(self.count(LOGIN_PATH), 1)
+
+    def test_concurrent_login_collision_is_retried(self):
+        # Seen live when two children's jobs log in at the same moment.
+        self.kn.scripts["login"] = [(409, {}, {"detail": "Already exists."})]
+        with mock.patch.object(ka, "_jitter", lambda: 0.0):
+            self.assertEqual(ka.login(USER, PASSWORD), SESSIONID)
+        self.assertEqual(self.count(LOGIN_PATH), 2)
+        self.assertEqual(self.sleeps, [ka.LOGIN_BUSY_DELAYS[0]])
+
+    def test_persistent_collision_is_login_busy(self):
+        self.kn.scripts["login"] = [(409, {}, {"detail": "Already exists."})] * (len(ka.LOGIN_BUSY_DELAYS) + 1)
+        with mock.patch.object(ka, "_jitter", lambda: 0.0):
+            self.assertAuthError("login_busy", ka.login, USER, PASSWORD)
+        self.assertEqual(self.count(LOGIN_PATH), len(ka.LOGIN_BUSY_DELAYS) + 1)
+        self.assertEqual(self.sleeps, list(ka.LOGIN_BUSY_DELAYS))
+
+    def test_jitter_stays_small(self):
+        for _ in range(5):
+            self.assertTrue(0.0 <= ka._jitter() < 3.0)
 
     def test_success_without_cookie_is_unexpected(self):
         self.kn.issue_cookie = False

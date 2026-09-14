@@ -45,6 +45,15 @@ REQUEST_TIMEOUT = 20  # seconds, per attempt
 RETRY_DELAYS = (3, 10)  # waits between the 3 attempts at a transient failure
 MAX_RETRY_AFTER = 30  # cap on a server-sent Retry-After, in seconds
 _sleep = time.sleep  # swapped out in tests
+# Waits before retrying a login that collided with another login for the
+# same account (HTTP 409 "Already exists."), e.g. two children's jobs.
+LOGIN_BUSY_DELAYS = (5, 10, 20)
+
+
+def _jitter() -> float:
+    """0-3 s spread so parallel jobs don't retry in lockstep (time-based, swapped out in tests)."""
+    return (time.time_ns() % 3000) / 1000.0
+
 
 # Shown in the Actions log / failure annotation. Plain Korean for parents.
 # Single line each: they are written to $GITHUB_OUTPUT.
@@ -60,6 +69,7 @@ HINTS = {
     "missing": "키즈노트 로그인 정보가 없습니다. "
                "KIDSNOTE_USERNAME / KIDSNOTE_PASSWORD 시크릿을 등록해 주세요.",
     "rate_limited": "키즈노트에 요청이 너무 많아 잠시 막혔습니다. 다음 실행에서 자동으로 다시 시도합니다.",
+    "login_busy": "같은 키즈노트 계정의 로그인이 동시에 진행돼 잠시 막혔습니다. 다음 실행에서 자동으로 다시 시도합니다.",
     "server_error": "키즈노트 서버에 일시적인 문제가 있습니다. 다음 실행에서 자동으로 다시 시도합니다.",
     "network": "키즈노트 서버에 접속하지 못했습니다. 일시적인 문제라면 다음 실행에서 자동으로 다시 시도합니다.",
     "unexpected": "키즈노트 로그인 응답이 예상과 다릅니다. 키즈노트 로그인 방식이 바뀌었을 수 있습니다.",
@@ -202,10 +212,19 @@ def login(username: str, password: str, user_agent: str = DEFAULT_USER_AGENT) ->
     # Any other status is not fatal: the SPA only uses this call to decide
     # whether to show the 2FA form, and the login call below reports errors.
 
-    status, raw = _request(
-        opener, "POST", "/api/web/login/",
-        body={"username": username, "password": password, "remember_me": True},
-    )
+    # kidsnote answers 409 "Already exists." while another login for the same
+    # account is in flight (several children's jobs start together). A retry a
+    # few seconds later succeeds, and both sessions stay valid (checked live).
+    for attempt in range(len(LOGIN_BUSY_DELAYS) + 1):
+        status, raw = _request(
+            opener, "POST", "/api/web/login/",
+            body={"username": username, "password": password, "remember_me": True},
+        )
+        if status != 409 or attempt == len(LOGIN_BUSY_DELAYS):
+            break
+        _sleep(LOGIN_BUSY_DELAYS[attempt] + _jitter())
+    if status == 409:
+        raise AuthError("login_busy", "HTTP 409 on /api/web/login/: another login for this account is in progress")
     if status != 200:
         if status == 429 or status >= 500:
             raise _status_error(status, "/api/web/login/")
