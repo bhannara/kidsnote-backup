@@ -100,6 +100,9 @@ on:
 
 permissions:
   contents: read
+  # actions: write lets the keepalive step below re-enable this
+  # workflow so GitHub's 60-day inactivity rule can't switch cron off.
+  actions: write
 
 concurrency:
   group: kidsnote-to-notion
@@ -242,3 +245,17 @@ jobs:
               echo "::error::repo secret '$s' is empty or unset"
             fi
           done
+
+      # GitHub auto-disables scheduled workflows after 60 days without
+      # repo activity. That silently stopped this mirror on 2026-08-20
+      # (last commit 2026-05-28), so an expired cookie went unnoticed.
+      # Re-enabling via the API resets the inactivity timer without a
+      # dummy commit. always(): keep the schedule alive even when the
+      # mirror step fails — a red run that emails the operator beats a
+      # schedule that quietly disappears.
+      - name: Keep cron schedule alive
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/kidsnote-to-notion.yml/enable"
