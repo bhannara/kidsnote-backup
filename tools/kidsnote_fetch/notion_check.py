@@ -9,6 +9,7 @@ it on the first run.
 from __future__ import annotations
 
 import http.client
+import json
 import time
 import urllib.error
 import urllib.request
@@ -27,8 +28,8 @@ HINTS = {
     "notion_bad_id": "NOTION_DATABASE_ID 에서 노션 주소를 찾지 못했습니다. "
                      "노션 페이지의 링크(공유 → 링크 복사)를 통째로 다시 붙여넣어 주세요.",
     "notion_token_invalid": "노션 토큰(NOTION_TOKEN)이 올바르지 않습니다. "
-                            "노션 통합 화면에서 토큰을 다시 복사해 시크릿을 수정해 주세요.",
-    "notion_no_access": "노션 페이지에 접근할 수 없습니다. 그 페이지에 통합을 연결했는지, "
+                            "노션 연결(통합) 설정 화면에서 토큰을 다시 복사해 시크릿을 수정해 주세요.",
+    "notion_no_access": "노션 페이지에 접근할 수 없습니다. 그 페이지에 연결(통합)을 추가했는지, "
                         "NOTION_DATABASE_ID 가 그 페이지의 링크인지 확인해 주세요.",
     "notion_rate_limited": "노션에 요청이 너무 많아 잠시 막혔습니다. 다음 실행에서 자동으로 다시 시도합니다.",
     "notion_server_error": "노션 서버에 일시적인 문제가 있습니다. 다음 실행에서 자동으로 다시 시도합니다.",
@@ -85,8 +86,22 @@ def _status_error(status: int, where: str) -> NotionCheckError:
     return NotionCheckError("notion_unexpected", f"HTTP {status} on {where}")
 
 
+def _page_kind(page_id: str, token: str) -> str:
+    """"page_with_database" if the page already holds an inline database (first 100 blocks), else "page"."""
+    try:
+        status, body = _get(f"/blocks/{page_id}/children?page_size=100", token)
+        blocks = json.loads(body).get("results") or [] if status == 200 else []
+    except (NotionCheckError, ValueError, AttributeError):
+        return "page"
+    return "page_with_database" if any(b.get("type") == "child_database" for b in blocks) else "page"
+
+
 def check_notion(token_value: str | None, target_value: str | None) -> str:
-    """Verify the token and target. Returns "database" or "page"; raises NotionCheckError."""
+    """Verify the token and target; raises NotionCheckError.
+
+    Returns "database", "page_with_database" (a page already holding the
+    backup table) or "page" (the backup creates its database there).
+    """
     token = normalize_token(token_value)
     if not token or not clean_secret(target_value):
         raise NotionCheckError("notion_missing", "NOTION_TOKEN or NOTION_DATABASE_ID is empty")
@@ -108,7 +123,7 @@ def check_notion(token_value: str | None, target_value: str | None) -> str:
     if status == 400 and ("is a page" in body or "page, not a database" in body):
         status, body = _get(f"/pages/{target}", token)
         if status == 200:
-            return "page"
+            return _page_kind(target, token)
     if status in (403, 404):
         raise NotionCheckError("notion_no_access", f"HTTP {status}: the integration can't see it")
     if status == 400:

@@ -97,10 +97,10 @@ def main(argv: list[str] | None = None) -> int:
                        f"{kidsnote_auth.HINTS.get(err.reason, kidsnote_auth.HINTS['unexpected'])} [{err.reason}]")
             print(("::warning title=키즈노트 자동 로그인 실패::" if args.github else "WARNING: ") + message)
         print(f"자녀 확인 OK: {mask_name(child.get('name'))}")
-        if kind == "page":
-            print("노션 연결 OK (페이지 — 첫 실행 때 그 안에 백업용 데이터베이스를 만듭니다)")
-        else:
-            print("노션 연결 OK (데이터베이스)")
+        print({
+            "database": "노션 연결 OK (데이터베이스)",
+            "page_with_database": "노션 연결 OK (페이지 안의 데이터베이스를 사용합니다)",
+        }.get(kind, "노션 연결 OK (빈 페이지 — 첫 실행 때 그 안에 백업용 데이터베이스를 만듭니다)"))
         if args.github:
             kidsnote_auth._github_append("GITHUB_ENV", f"KIDSNOTE_SESSION_COOKIE={session.sessionid}")
             kidsnote_auth._github_append("GITHUB_OUTPUT", "ok=true")

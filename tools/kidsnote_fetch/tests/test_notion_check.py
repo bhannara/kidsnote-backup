@@ -43,7 +43,14 @@ class CheckNotionTest(unittest.TestCase):
     def test_page_share_link(self):
         self.assertEqual(nc.check_notion(NOTION_TOKEN, f"https://www.notion.so/키즈노트-백업-{PAGE}?source=copy_link"),
                          "page")
-        self.assertEqual(self.server.paths(), ["GET /users/me", f"GET /databases/{PAGE}", f"GET /pages/{PAGE}"])
+        self.assertEqual(self.server.paths(), ["GET /users/me", f"GET /databases/{PAGE}", f"GET /pages/{PAGE}",
+                                               f"GET /blocks/{PAGE}/children"])
+
+    def test_page_that_already_holds_the_backup_table(self):
+        holder, table = hexid(5), hexid(6)
+        self.notion.add_page(holder)
+        self.notion.add_database(table, parent_page=holder)
+        self.assertEqual(nc.check_notion(NOTION_TOKEN, holder), "page_with_database")
 
     def test_new_app_domain_link(self):
         self.assertEqual(nc.check_notion(NOTION_TOKEN, f"https://app.notion.com/p/{PAGE}?pvs=204"), "page")

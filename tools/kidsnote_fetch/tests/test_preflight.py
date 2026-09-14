@@ -83,9 +83,17 @@ class PreflightTest(unittest.TestCase):
         self.assertEqual(env, f"KIDSNOTE_SESSION_COOKIE={SESSIONID}\n")
         self.assertTrue(out.startswith(f"::add-mask::{SESSIONID}\n"))
         self.assertIn("자녀 확인 OK: 우*린", out)
-        self.assertIn("노션 연결 OK (페이지", out)
+        self.assertIn("노션 연결 OK (빈 페이지", out)
         for secret in ("우하린", PASSWORD, NOTION_TOKEN):
             self.assertNotIn(secret, out)
+
+    def test_page_that_already_holds_the_backup_table(self):
+        holder = hexid(8)
+        self.notion.add_page(holder)
+        self.notion.add_database(hexid(9), parent_page=holder)
+        _, out, _, outputs = self.run_main(NOTION_DATABASE_ID=f"https://app.notion.com/p/{holder}")
+        self.assertEqual(outputs, {"ok": "true"})
+        self.assertIn("노션 연결 OK (페이지 안의 데이터베이스를 사용합니다)", out)
 
     def test_database_link(self):
         _, out, _, outputs = self.run_main(NOTION_DATABASE_ID=DB)
