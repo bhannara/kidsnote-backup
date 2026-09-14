@@ -588,8 +588,9 @@ def main(argv: list[str] | None = None) -> int:
                          "process env (whichever is set).")
     ap.add_argument("--auth-mode", default="session-cookie-env",
                     choices=["session-cookie-env", "browser-cookie"],
-                    help="session-cookie-env (default): reads KIDSNOTE_SESSION_COOKIE "
-                         "(value of `sessionid`) from env. Required for headless CI. "
+                    help="session-cookie-env (default): logs in with KIDSNOTE_USERNAME / "
+                         "KIDSNOTE_PASSWORD, falling back to KIDSNOTE_SESSION_COOKIE "
+                         "(value of `sessionid`). Required for headless CI. "
                          "browser-cookie: pulls cookies from a locally logged-in browser.")
     ap.add_argument("--env-file", type=Path,
                     default=Path(__file__).resolve().parents[2] / ".env",
@@ -678,16 +679,29 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- auth -----
     if args.auth_mode == "session-cookie-env":
+        from kidsnote_auth import AuthError, resolve_session  # local module
+        username = _resolve_secret(env, "KIDSNOTE_USERNAME")
+        password = _resolve_secret(env, "KIDSNOTE_PASSWORD")
         cookie_val = _resolve_secret(env, "KIDSNOTE_SESSION_COOKIE")
-        if not cookie_val:
+        if not (username and password) and not cookie_val:
             sys.exit(
-                "KIDSNOTE_SESSION_COOKIE missing. Extract the `sessionid` cookie "
-                "value for kidsnote.com from a logged-in browser session and "
-                "set it in .env (local) or as a repo secret (GitHub Actions)."
+                "Kidsnote credentials missing. Set KIDSNOTE_USERNAME + "
+                "KIDSNOTE_PASSWORD (auto-login) or KIDSNOTE_SESSION_COOKIE "
+                "in .env (local) or as repo secrets (GitHub Actions)."
             )
+        # Validates the session up front, so a dead login stops here before
+        # any Notion work. In CI the "Kidsnote login" workflow step already
+        # logged in and passes the fresh sessionid via KIDSNOTE_SESSION_COOKIE.
+        try:
+            cookie_val, source = resolve_session(username, password, cookie_val, USER_AGENT)
+        except AuthError as e:
+            sys.exit(f"Kidsnote login failed ({e.reason}): {e}")
         sess = _baseline_session()
         sess.cookies.set("sessionid", cookie_val, domain="www.kidsnote.com", path="/")
-        _LOGGER.info("Using sessionid from KIDSNOTE_SESSION_COOKIE env var")
+        _LOGGER.info(
+            "Kidsnote session ready (%s)",
+            "fresh login" if source == "login" else "KIDSNOTE_SESSION_COOKIE",
+        )
     else:
         sess = _load_session_from_browser(args.browser)
 

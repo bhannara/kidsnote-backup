@@ -1,18 +1,19 @@
 # Kidsnote → Notion mirror
 #
-# MANUAL EXECUTION ONLY. Kidsnote's login flow can no longer be driven by
-# a headless HTTP client (the page is a Next.js SPA). So the workflow
-# relies on a `sessionid` cookie the operator extracts manually from a
-# logged-in browser session (Chrome F12 → Application → Cookies) and
-# stores in the KIDSNOTE_SESSION_COOKIE secret. That cookie typically
-# lasts ~30 days; when it expires, re-extract and re-run.
+# Runs on a 6h cron. Each run logs in to kidsnote with KIDSNOTE_USERNAME /
+# KIDSNOTE_PASSWORD through the same JSON API the web login page uses, so
+# there is no cookie to refresh. KIDSNOTE_SESSION_COOKIE (a `sessionid`
+# copied from a browser, valid 14 days after login) is only a fallback for
+# accounts that can't log in headlessly, e.g. with 2-step verification on.
 #
 # Dedup: each new Notion page records the kidsnote `Report ID`. Subsequent
 # runs query the DB once at startup and skip reports whose id is already
 # stored, so re-running is safe and idempotent.
 #
 # Required GitHub repository secrets (Settings → Secrets and variables → Actions):
-#   KIDSNOTE_SESSION_COOKIE   value of the `sessionid` cookie for kidsnote.com
+#   KIDSNOTE_USERNAME         kidsnote login id
+#   KIDSNOTE_PASSWORD         kidsnote password
+#                             (or KIDSNOTE_SESSION_COOKIE: `sessionid` cookie, expires in 14 days)
 #   NOTION_TOKEN              internal integration token from notion.so/profile/integrations
 #   NOTION_DATABASE_ID        32-char hex id from your Notion DB URL
 
@@ -121,13 +122,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Log in before anything else (stdlib-only script, no pip install), so
+      # a dead login ends the run in seconds. On success the fresh sessionid
+      # is exported (masked) to later steps as KIDSNOTE_SESSION_COOKIE.
+      - name: Kidsnote login
+        id: auth
+        env:
+          KIDSNOTE_USERNAME: ${{ secrets.KIDSNOTE_USERNAME }}
+          KIDSNOTE_PASSWORD: ${{ secrets.KIDSNOTE_PASSWORD }}
+          KIDSNOTE_SESSION_COOKIE: ${{ secrets.KIDSNOTE_SESSION_COOKIE }}
+        run: python3 tools/kidsnote_fetch/kidsnote_auth.py --github
+
+      # One email per outage instead of one every 6 hours. The first failed
+      # login fails this step, so GitHub sends a single failure email. While
+      # the login keeps failing, later runs see the previous run already
+      # reported it and finish green with a warning. Fixing the secret is
+      # all it takes to resume: the next cron run backs up normally.
+      - name: Kidsnote login failed - notify once
+        if: steps.auth.outputs.ok != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REASON: ${{ steps.auth.outputs.reason }}
+          HINT: ${{ steps.auth.outputs.hint }}
+        run: |
+          # Latest finished run of this workflow (the current one is still in progress).
+          prev=$(gh run list -R "$GITHUB_REPOSITORY" --workflow kidsnote-to-notion.yml             --status completed --limit 20 --json databaseId,conclusion             --jq 'map(select(.conclusion == "success" or .conclusion == "failure")) | .[0].databaseId // ""')
+          reported=0
+          if [ -n "$prev" ]; then
+            reported=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$prev/jobs"               --jq '[.jobs[].steps[] | select(.name == "Kidsnote login failed - notify once" and .conclusion != "skipped")] | length')
+          fi
+          if [ "$reported" -gt 0 ]; then
+            echo "::warning title=키즈노트 로그인 실패 (이미 알림 보냄)::$HINT [$REASON] 백업은 건너뜁니다."
+            exit 0
+          fi
+          echo "::error title=키즈노트 로그인 실패::$HINT [$REASON]"
+          exit 1
+
       - name: Set up Python
+        if: steps.auth.outputs.ok == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Install fetcher deps + image helpers
+        if: steps.auth.outputs.ok == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r tools/kidsnote_fetch/requirements.txt
@@ -157,6 +196,7 @@ jobs:
       # dispatch and cron stay in sync without any second toggle.
       - name: Resolve effective AI toggle
         id: ai
+        if: steps.auth.outputs.ok == 'true'
         env:
           REPO_VAR_AI: ${{ vars.AI_FEATURES }}
           REPO_SECRET_AI: ${{ secrets.AI_FEATURES }}
@@ -195,8 +235,10 @@ jobs:
           ollama pull llama3.1:8b
 
       - name: Mirror Kidsnote → Notion
+        if: steps.auth.outputs.ok == 'true'
         env:
-          KIDSNOTE_SESSION_COOKIE: ${{ secrets.KIDSNOTE_SESSION_COOKIE }}
+          # KIDSNOTE_SESSION_COOKIE comes from $GITHUB_ENV (set by the
+          # "Kidsnote login" step). Setting it here would override it.
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           # Tell notion_mirror.py where Ollama lives + which model to use
@@ -234,13 +276,12 @@ jobs:
           python tools/kidsnote_fetch/fetch.py "${ARGS[@]}"
 
       - name: Verify required secrets were present
-        if: failure()
+        if: failure() && steps.auth.outputs.ok == 'true'
         env:
-          KIDSNOTE_SESSION_COOKIE: ${{ secrets.KIDSNOTE_SESSION_COOKIE }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
-          for s in KIDSNOTE_SESSION_COOKIE NOTION_TOKEN NOTION_DATABASE_ID; do
+          for s in NOTION_TOKEN NOTION_DATABASE_ID; do
             if [ -z "${!s:-}" ]; then
               echo "::error::repo secret '$s' is empty or unset"
             fi
