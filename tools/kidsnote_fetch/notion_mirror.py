@@ -485,6 +485,9 @@ MAX_BLOCK_TEXT = 1900                 # Notion paragraph rich_text limit (2000).
 
 # Kidsnote life-record status codes → human Korean. Unknown values are
 # rendered as-is, so missing entries here just degrade gracefully.
+# Wording for codes added 2026-09-14 is copied from kidsnote's own web UI
+# (the report page's i18n store, tests/data/kidsnote_status_labels_ko.json);
+# earlier entries keep their original wording so published pages stay consistent.
 SLEEP_HOUR_KO = {
     "no_sleep": "안 잤음",
     "none": "안 잠",
@@ -494,6 +497,12 @@ SLEEP_HOUR_KO = {
     "1_to_1.5": "1~1.5시간",
     "1.5_to_2": "1.5~2시간",
     "over_2": "2시간 이상",
+    "sleep_hardly": "잠을 설쳤어요",
+    "sleep_late": "늦잠 잤어요",
+    "sleep_well": "잠을 푹 잤어요",
+    "slp_good": "단잠",
+    "slp_normal": "보통",
+    "slp_bad": "부족",
 }
 STATUS_KO = {
     "good": "좋음",
@@ -514,7 +523,29 @@ STATUS_KO = {
     "needs_trim": "정리 필요",
     "active": "활발",
     "calm": "차분",
+    # bowel_status / bowel[].status
+    "watery": "묽음",
+    "diarrhea": "설사",
+    "bw_no": "안했음",
+    "bw_one": "1회",
+    "bw_two": "2회",
+    # meal_status
+    "ml_free": "자율배식",
+    "ml_one": "1회",
+    "ml_two": "2회",
+    # temperature_status
+    "slight": "미열",
+    # bath_status
+    "bath": "목욕",
+    "shower": "샤워",
+    # nail_status
+    "cut": "자름",
+    "ok": "양호",
+    # outdoor_activity_status (booleans are looked up as "true" / "false")
+    "true": "O",
+    "false": "X",
 }
+ACTIVITY_RATE_KO = {"10": "적극적", "20": "보통", "30": "소극적"}
 WEATHER_KO = {
     # Codes the live kidsnote API actually uses (sampled from 391 reports):
     "sunny": "☀️ 맑음",
@@ -537,7 +568,13 @@ WEATHER_KO = {
     "stormy": "⛈️ 폭풍",
     "hot": "🥵 더움",
     "cold": "🥶 추움",
+    # Also in kidsnote's own weather picker:
+    "hail": "🧊 우박",
+    "shower": "🌦️ 소나기",
+    "shower_rain": "🌦️ 소나기",
 }
+# kidsnote's "표시안함" (don't show weather) choices — treat as no weather.
+WEATHER_HIDDEN = frozenset({"none", "undefined"})
 
 # Activity categories used to label alimnota titles.
 # Order matters — earlier entries get matched first when multiple categories
@@ -1239,7 +1276,7 @@ class NotionMirror:
         # No body-text inference (per design: ``있는 그대로``).
         _atype = (report.get("author") or {}).get("type") or ""
         w_code = report.get("weather") if _atype != "parent" else None
-        if w_code:
+        if w_code and w_code not in WEATHER_HIDDEN:
             w_display = WEATHER_KO.get(w_code, w_code)
             blocks.append({
                 "object": "block",
@@ -1980,7 +2017,9 @@ class NotionMirror:
         """
         bits: list[str] = []
 
-        def to_ko(value: str | None) -> str | None:
+        def to_ko(value: str | bool | None) -> str | None:
+            if isinstance(value, bool):  # outdoor_activity_status may be a JSON boolean
+                value = "true" if value else "false"
             if not value:
                 return None
             return STATUS_KO.get(value, value)
@@ -2041,7 +2080,7 @@ class NotionMirror:
 
         ar = report.get("activity_rate")
         if ar not in (None, "", 0):
-            bits.append(f"⭐ 활동 {ar}")
+            bits.append(f"⭐ 활동 {ACTIVITY_RATE_KO.get(str(ar), ar)}")
 
         return bits
 
@@ -3203,7 +3242,7 @@ class NotionMirror:
             blocks.append(self._mermaid_block("\n".join(mer)))
 
         # ---- 날씨 분포 ----
-        wd = stats.get("weather_dist") or {}
+        wd = {k: v for k, v in (stats.get("weather_dist") or {}).items() if k not in WEATHER_HIDDEN}
         if wd:
             blocks.append(self._h2("🌤️ 날씨 분포 (입력된 알림장만)"))
             mer = ["pie title 날씨"]
@@ -3283,7 +3322,7 @@ class NotionMirror:
                             f"{STATUS_KO.get(k, k)}({v})" for k, v in yms.items()
                         )
                     ))
-                ywd = yb.get("weather_dist") or {}
+                ywd = {k: v for k, v in (yb.get("weather_dist") or {}).items() if k not in WEATHER_HIDDEN}
                 if ywd:
                     blocks.append(self._para(
                         "🌤️ 날씨: " + ", ".join(
